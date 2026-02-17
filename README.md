@@ -1,0 +1,2 @@
+# TrollGuard
+(Formerly ClawGaurd)
