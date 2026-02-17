@@ -21,9 +21,8 @@ should **act as one when used together** — like the Apple ecosystem.
 
 ## What Has Been Built (in TrollGuard)
 
-TrollGuard (`claude/setup-trollguard-modules-7K1m4` branch) has implemented
-the foundational pieces.  Your job is to **integrate your module** with this
-system.  Here's what exists:
+TrollGuard (on `main` branch) has implemented the foundational pieces.
+Your job is to **integrate your module** with this system.  Here's what exists:
 
 ### 1. NGPeerBridge (Tier 2 Cross-Module Learning) — `ng_peer_bridge.py`
 
@@ -244,12 +243,16 @@ You need to:
 
 ## Reference Implementation
 
-The complete reference implementation is in TrollGuard on branch
-`claude/setup-trollguard-modules-7K1m4`.  Key files to study:
+The complete reference implementation is in TrollGuard on the `main` branch:
+https://github.com/greatnorthernfishguy-hub/TrollGuard
 
-- `ng_peer_bridge.py` — The Tier 2 peer bridge (vendor this)
+Key files to study (all in the repo root or noted subdirectory):
+
+- `ng_peer_bridge.py` — The Tier 2 peer bridge (vendor this into your module)
 - `et_modules/manager.py` — The module manager
 - `et_module.json` — The manifest format
 - `install.sh` — Registration during installation
 - `main.py` lines 59-82 — How `_init_ng_lite()` connects the peer bridge
 - `config.yaml` lines 46-52 — NG-Lite + peer bridge configuration
+- `api.py` — FastAPI REST API for runtime scanning
+- `trollguard_hook.py` — OpenClaw integration hook (singleton pattern)
