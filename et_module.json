@@ -9,6 +9,6 @@
   "entry_point": "main.py",
   "ng_lite_version": "1.0.0",
   "dependencies": [],
-  "service_name": "",
+  "service_name": "trollguard",
   "api_port": 7438
 }

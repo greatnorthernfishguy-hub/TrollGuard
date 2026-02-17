@@ -206,7 +206,15 @@ registry['modules']['trollguard'] = {
     'module_id': 'trollguard',
     'display_name': 'TrollGuard',
     'version': '0.1.0',
+    'description': 'The Open-Source Immune System for AI Agents',
     'install_path': '$INSTALL_DIR',
+    'git_remote': 'https://github.com/greatnorthernfishguy-hub/TrollGuard.git',
+    'git_branch': 'main',
+    'entry_point': 'main.py',
+    'ng_lite_version': '1.0.0',
+    'dependencies': [],
+    'service_name': 'trollguard',
+    'api_port': $API_PORT,
     'registered_at': time.time(),
 }
 registry['last_updated'] = time.time()
