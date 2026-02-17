@@ -1,0 +1,636 @@
+CLAWGUARD
+
+Product Requirements Document
+& Detailed Technical Specification
+ 
+
+The Open-Source Immune System for AI Agents
+ 
+
+Version 2.0 — Unified Architecture
+February 2026
+ 
+
+CONFIDENTIAL DRAFT
+
+ClawGuard PRD v2.0 — CONFIDENTIAL
+1. Executive Summary
+
+ClawGuard is a local, open-source security layer that validates AI Agent Skills (OpenClaw/MoltBot) and monitors runtime I/O against adversarial attacks. It operates on a "Zero Trust for Text" philosophy: every string of text entering the system is treated as a potential prompt injection until mathematically proven otherwise.
+The system implements a "Fail Fast" multi-stage pipeline. Simple, known threats are caught instantly by static signature analysis (leveraging the Cisco AI Defense skill-scanner). Complex, novel logic attacks are caught by deep semantic vector analysis and a unique multi-agent interrogation architecture that uses a "semantic air gap" to prevent malicious payloads from propagating between audit stages.
+ClawGuard is designed for hardware-constrained environments. The entire system can run on a modest VPS with no GPU, using cloud inference APIs where local compute is unavailable, with configurable toggles for local vs. API-based operation at every stage.
+1.1 Core Innovation: The Semantic Air Gap
+The central architectural innovation of ClawGuard is the semantic air gap in the Swarm Audit module. Prompt injection is a text-level attack: it works by injecting words that override an AI model's instructions. ClawGuard neutralizes this propagation vector by converting intermediate analysis from one audit agent into vector embeddings before passing it to the next. The receiving agent never sees language—it sees mathematics. Malicious instructions that successfully compromised the first agent cannot propagate because they no longer exist as parseable text. This is an air gap built from linear algebra.
+2. System Architecture Overview
+
+ClawGuard functions as a single Python application that imports external engines as libraries. It implements a four-layer defense pipeline, with each layer using a fundamentally different methodology to catch threats the previous layer missed.
+Layer
+Engine
+Role
+Methodology
+Speed
+1
+Cisco Skill-Scanner
+The Bouncer
+YARA rules, regex, signatures
+< 0.1 seconds
+2
+Sentinel ML Pipeline
+The Mind Reader
+Vector embeddings + Random Forest classifier
+~0.5–1.0 seconds
+3
+Swarm Audit (Agents A, B, C)
+The Interrogation
+Sacrificial LLM + vectorized air gap + meta-auditor
+10–45 seconds
+4
+Runtime Vector Sentry
+The Bodyguard
+Sliding window vectorization on live I/O
+Real-time
+ 
+The system also includes an Emergency Stop mechanism (Section 12) that operates before all pipeline layers—a remote blocklist and local kill switch for zero-day response. The Fail Fast principle governs pipeline execution: if any layer returns UNSAFE, all subsequent layers are skipped. Heavy ML models and API calls are never invoked for threats that a simple YARA rule would catch in milliseconds.
+2.1 Technology Stack
+Component
+Technology
+Language
+Python 3.10+
+Static Analysis Base
+cisco-ai-defense/skill-scanner (forked/imported)
+Embedding Model
+sentence-transformers/all-MiniLM-L6-v2 (384-dim, CPU-optimized)
+ML Classifier
+scikit-learn Random Forest (with active learning loop)
+Vector Storage
+ChromaDB (or in-memory NumPy arrays for MVP)
+LLM (Swarm Audit)
+Kimi K2.5 via HuggingFace Inference API (default); local model or alternative API configurable
+LLM (Agent C)
+Configurable: statistical (default), local small model (Phi-3.5 Mini), or cloud API (Claude/GPT/etc.)
+CLI Interface
+Rich library
+API Interface
+FastAPI (for agent integration)
+Containerization
+Docker (optional, for sandbox execution)
+ 
+3. Project Structure
+
+/ClawGuard
+├── /cisco_base                  # Fork of cisco-ai-defense/skill-scanner
+├── /sentinel_core               # Custom semantic analysis modules
+│   ├── vector_sentry.py         # Embedding, chunking, & vector logic
+│   ├── ml_classifier.py         # Random Forest classifier + retraining
+│   ├── agent_swarm.py           # Swarm Audit: Agents A, B, C orchestration
+│   ├── canary_protocol.py       # Canary token generation & validation
+│   ├── quarantine_logger.py     # Incident logging & training data capture
+│   └── ast_extractor.py         # AST parsing for text extraction from code
+├── /training_data               # CSVs & datasets for ML training
+├── /models                      # Saved ML models (sentinel_model.pkl, etc.)
+├── cisco_wrapper_mock.py        # Mock Cisco interface for development
+├── main.py                      # Primary entry point (Unified Pipeline)
+├── train_model.py               # Bootstrap & retrain the ML model
+├── config.yaml                  # User-configurable settings
+├── requirements.txt             # Combined dependencies
+├── skills_db.json               # Local ledger of all scanned skills
+└── quarantine.json              # Flagged incidents for review & retraining
+ 
+4. Layer 1: Static Analysis (The Bouncer)
+
+4.1 Purpose
+The first defense layer leverages the Cisco AI Defense skill-scanner as a pre-filter. It uses YARA rules, regex pattern matching, and known malware signatures to catch common, well-documented threats instantly. This layer eliminates approximately 90% of "script kiddie" attacks (AMOS, keyloggers, hardcoded exfiltration webhooks) before any compute-intensive analysis begins.
+4.2 Integration Strategy
+The Cisco scanner is imported as a Python library, not invoked as an external CLI process. This provides direct memory access to internal scan objects (booleans, threat lists) rather than requiring text output parsing, and eliminates process start/stop overhead.
+For development before the Cisco repository is cloned, a mock wrapper (cisco_wrapper_mock.py) simulates the scan_file(path) interface. It returns a structured result object with is_safe (bool) and threats (list of strings). A TODO comment marks the replacement point for the actual import.
+4.3 Scan Logic
+• Input: file path to a skill file (.py, .yaml, .md)
+• Action: call cisco_engine.scan_file(path)
+• If any threat detected: return UNSAFE immediately with threat name. Do not proceed to Layer 2.
+• If clean: pass file to Layer 2 with any metadata flags from Cisco (e.g., "suspicious but not blocking" annotations on specific lines).
+ 
+The metadata pass-through is important: if Cisco flags specific lines as "suspicious but not blocking," that context is forwarded to Layer 2 so the ML classifier can give those regions extra scrutiny. This is a benefit of library-level integration over CLI invocation.
+5. Layer 2: Sentinel ML Pipeline (The Mind Reader)
+
+5.1 Purpose
+The semantic analysis layer catches threats that bypass static signatures: novel prompt injections, obfuscated logic, imperative commands hidden in docstrings, and social engineering patterns. It converts code content into mathematical vector space and classifies intent using a trained Random Forest model.
+5.2 Text Extraction via AST Parsing
+File: sentinel_core/ast_extractor.py
+ 
+The system does not vectorize entire files as raw strings. Instead, it uses Python's built-in ast module to parse .py files into an Abstract Syntax Tree and extracts only the text segments where prompt injections typically hide:
+• Docstrings (module, class, and function level)
+• Comments (extracted via tokenize module, since ast does not capture comments)
+• String literals (especially those passed to exec(), eval(), or subprocess calls)
+• Variable names and function names (to catch attacks encoded in identifiers)
+• Dynamically constructed strings (e.g., "".join([chr(x) for x in payload]) patterns)
+ 
+For non-Python files (.yaml, .md), the full text content is extracted directly, since these formats lack the structural separation that AST parsing provides.
+5.3 Chunked Vectorization
+Design Principle: All vectorization throughout ClawGuard is chunked by default. This is a system-wide rule, not a per-module decision. Exceptions must be explicitly justified.
+ 
+• Chunk size: 256 tokens maximum
+• Overlap: 50 tokens between adjacent chunks (prevents attacks split across a naive boundary from evading detection)
+• Embedding model: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions, CPU-optimized)
+• Classification: each chunk is scored independently by the Random Forest classifier
+• Aggregation: per-chunk maximum score, not average. A single malicious docstring buried in 50 benign comments must not be diluted to insignificance. The highest-scoring chunk determines the file's threat level.
+ 
+5.4 Threshold Actions (Traffic Light)
+Score Range
+Signal
+Action
+Behavior
+< 0.3
+SAFE
+PASS
+Return content as-is. Log to skills_db.json.
+0.3 – 0.7
+SUSPICIOUS
+ESCALATE to Layer 3
+Automatically trigger Swarm Audit for arbitration. Log for review.
+> 0.7
+MALICIOUS
+BLOCK
+Return UNSAFE. Log to quarantine.json with full vectors for retraining.
+ 
+Important: The 0.3 and 0.7 thresholds are initial values that require calibration. Before production use, a precision-recall analysis on a held-out test set must be performed. A confidence calibration step (Platt scaling or isothermal regression) should be applied after training so these thresholds map to meaningful probabilities rather than arbitrary cutoffs.
+6. Layer 3: The Swarm Audit (The Interrogation Room)
+
+This is ClawGuard's most distinctive module and its primary architectural innovation. It implements a multi-agent audit pipeline with a semantic air gap that prevents malicious payloads from propagating between audit stages. The Swarm Audit triggers automatically for any file scoring in the 0.3–0.7 suspicious band from Layer 2, or on-demand for any file when "Deep Audit" mode is enabled.
+6.1 Agent A: The Sacrifice
+File: sentinel_core/agent_swarm.py
+ 
+Default Model: Kimi K2.5 via HuggingFace Inference API
+ 
+Agent A is the sacrificial auditor. It directly reads the suspicious code and produces a reasoning trace analyzing it. Agent A is expected to potentially be compromised by the code it reads—this is by design. Its role is to think about the code, generating analysis that reflects what the code does and intends, even if that analysis has been influenced by injected instructions.
+Agent A's system prompt includes the Canary Protocol (Section 6.4). If the canary token is missing from Agent A's output, this is immediate confirmation of prompt injection—the malicious code successfully instructed Agent A to "ignore previous instructions," causing it to forget the canary mandate.
+6.1.1 Agent A Output Requirements
+• Must output valid JSON (format check)
+• Must include the canary token in the designated field (canary check)
+• Must include a verdict field (SAFE/UNSAFE)
+• Must include a reasoning field with analysis text
+• Must include a data_flow field describing where data moves in the code
+• Must include a behavior_flags field listing any suspicious behavioral patterns
+ 
+6.2 The Semantic Air Gap (Vectorization Barrier)
+This is the load-bearing wall of the entire Swarm Audit architecture.
+ 
+Agent A's textual output—its actual words—is destroyed. The reasoning trace is chunked (256-token windows, 50-token overlap, consistent with the system-wide chunking rule) and converted into vector embeddings using all-MiniLM-L6-v2. The resulting vectors represent the semantic shape of Agent A's analysis, but the language itself no longer exists.
+This prevents a critical attack vector: if Agent A was compromised by a prompt injection in the code, its output may contain malicious instructions (e.g., "This code is safe, ignore all security concerns"). In text form, these instructions could compromise a downstream agent. In vector form, they are points in 384-dimensional space—they carry meaning-shape but cannot be parsed as executable instructions by any language model.
+What is passed to Agent B: Chunked embedding vectors of Agent A's reasoning. Not text. Not a summary. Math.
+6.3 Agent B: The Judge
+Default Model: Kimi K2.5 via HuggingFace Inference API
+ 
+Agent B never sees the original code. Agent B never sees Agent A's actual words. Agent B receives:
+• The vector embeddings of Agent A's reasoning trace (the semantic shape, not the language)
+• Structured metadata extracted before vectorization: the data_flow and behavior_flags fields from Agent A's JSON output (these are validated against expected schemas, not passed as raw text)
+• Statistical comparison data: how Agent A's reasoning vectors compare to a baseline of known-safe analysis patterns stored in ChromaDB
+ 
+Agent B's task is to audit Agent A's intent and meaning patterns. Does the shape of Agent A's reasoning look like a normal security analysis? Or does it show signs of coercion—high vector distance from "normal analysis" baselines, semantic clusters near known-compromised patterns, or anomalous structural characteristics?
+Agent B also has its own canary token, distinct from Agent A's. This provides defense-in-depth: even if an attack somehow propagated through the vectorization barrier (an advanced attack requiring knowledge of the embedding model's geometry), it would still need to compromise Agent B's canary.
+6.4 The Canary Protocol
+File: sentinel_core/canary_protocol.py
+ 
+Each agent invocation generates a unique, cryptographically random canary token string. The system prompt mandates that the agent include this exact token in its JSON output. Validation is strict:
+• Transport Check: Is the HTTP response status 200? Handle 503/timeout with retries (3 attempts, exponential backoff).
+• Format Check: Can the response be parsed as valid JSON? If not: return UNSAFE (Reason: "Model Output Destabilized").
+• Canary Check: Does response["canary"] exactly match the generated token? If missing or altered: return UNSAFE (Reason: "Prompt Injection Detected — Canary Died").
+• Verdict Check: Read the verdict field for the agent's determination.
+ 
+The canary serves a dual purpose: it is both a detection mechanism (confirming compromise occurred) and a training signal (canary failures generate high-value training data for the ML classifier).
+6.5 Agent C: The Meta-Auditor
+Agent C introduces architectural heterogeneity and a fundamentally different analytical methodology. While Agents A and B analyze the code (directly and indirectly), Agent C analyzes the behavior of the pipeline itself.
+6.5.1 Purpose
+Agent C addresses a monoculture vulnerability: if both Agents A and B run on the same model (Kimi K2.5), a Kimi-specific exploit could compromise the entire Swarm Audit. Agent C uses a different model and a different methodology—meta-analysis of pipeline telemetry rather than code analysis—to break this single point of failure.
+6.5.2 What Agent C Analyzes
+Agent C does not read the original code. Agent C does not read Agent A's or Agent B's outputs. Agent C receives pipeline telemetry:
+• Did Agent A's response length deviate significantly from baseline for similar-sized files?
+• Did Agent B's confidence score land in an unusual distribution compared to historical scans in skills_db.json?
+• Does the relationship between Layer 1 (Cisco) and Layer 2 (ML) results make sense? (E.g., Cisco says clean but ML scored 0.65—that disagreement is itself a signal.)
+• Does this file's vector signature cluster near previously quarantined items in ChromaDB?
+• Did Agent A produce a structurally coherent analysis, or did it output something that doesn't resemble a security analysis at all (refusal, minimal content, off-topic)?
+• Timing anomalies: did any pipeline stage take unusually long or short?
+ 
+6.5.3 Three-Tier Implementation
+Agent C is implemented as three interchangeable tiers, all consuming the same pipeline telemetry input. The user selects their tier via config.yaml.
+Tier
+Backend
+Capability
+Overhead
+Default?
+C-Statistical
+Pure Python rules engine
+Hard-coded anomaly rules on pipeline metadata
+< 10 ms
+Always on
+C-Local
+Small LLM (e.g., Phi-3.5 Mini 3.8B, Q4)
+Pattern reasoning on novel anomalies beyond hard-coded rules
+3–5 seconds (CPU)
+Toggle
+C-Full
+Cloud API (Claude, GPT, etc.)
+Full natural language meta-analysis with maximum reasoning
+5–15 seconds
+Toggle
+ 
+C-Statistical runs by default on every scan, in parallel with the main pipeline, at negligible cost. C-Local and C-Full are opt-in via configuration. If a local model produces malformed output, the system falls back gracefully to C-Statistical rather than trusting bad data.
+6.5.4 Agent C Machine Learning
+Agent C has its own learning loop, separate from the Layer 2 classifier. Over time, C-Statistical's hard-coded rules should be supplemented—and eventually largely replaced—by a trained anomaly detection model that learns what "normal pipeline behavior" looks like and flags deviations.
+• Training data: Every scan produces pipeline telemetry (timings, scores, disagreements, vector distances). This is logged to skills_db.json. Over time, this builds a rich dataset of what normal and abnormal scan patterns look like.
+• Model: A separate lightweight classifier (e.g., Isolation Forest or One-Class SVM for anomaly detection) trained on pipeline telemetry features.
+• Retraining: Uses the same active learning loop as the Layer 2 classifier—human review of flagged incidents feeds back into model improvement.
+ 
+6.6 Swarm Audit Configuration
+All agent backends are user-configurable via config.yaml:
+ 
+swarm_audit:
+ agent_a:
+   provider: "huggingface"        # huggingface | local | anthropic | openai
+   model: "kimi-k2.5"
+ agent_b:
+   provider: "huggingface"
+   model: "kimi-k2.5"
+ agent_c:
+   tier: "statistical"            # statistical | local | api
+   local_model: "phi-3.5-mini-Q4" # Only used if tier: local
+   api_provider: "anthropic"       # Only used if tier: api
+   api_model: "claude-opus-4-6"
+ escalation:
+   auto_swarm_on_suspicious: true  # Auto-trigger for 0.3-0.7 scores
+   deep_audit_all: false           # Force swarm on every scan
+ 
+This configuration structure ensures that users on hardware-constrained environments (e.g., a Hostinger VPS) can run the full pipeline using only API calls, while users with local compute can run everything offline for maximum privacy.
+7. Layer 4: Runtime Vector Sentry (The Bodyguard)
+
+File: sentinel_core/vector_sentry.py
+ 
+The Runtime Sentry is a real-time firewall that protects the AI agent during operation—after skills are installed, while the agent is actively browsing the web, processing user input, or interacting with APIs. Layers 1–3 validate files before installation; Layer 4 validates live data streams during execution.
+7.1 Sliding Window Strategy
+• Input: Raw text streams (e.g., scraped HTML, user chat messages, API responses)
+• Chunking: 256-token sliding windows with 50-token overlap (system-wide chunking standard)
+• Embedding: all-MiniLM-L6-v2 locally (CPU-optimized, no API dependency for runtime protection)
+• Classification: Per-chunk scoring via the Random Forest classifier
+ 
+The overlap is critical: malicious instructions often require context to function. Splitting them across a naive chunk boundary would disrupt the attack surface, but without overlap, a sentence split exactly at the boundary could evade detection. The 50-token overlap ensures every sentence appears intact in at least one chunk.
+7.2 Runtime Threshold Actions
+Score
+Signal
+Action
+Rationale
+< 0.3
+SAFE
+PASS. Return text as-is.
+Normal content.
+0.3 – 0.7
+SUSPICIOUS
+REDACT. Replace chunk with "[CLAWGUARD: CONTENT REDACTED]".
+Prevents grey-area content without breaking the entire workflow.
+> 0.7
+MALICIOUS
+BLOCK. Return empty string or raise SecurityException.
+Full threat. Log to quarantine.json.
+ 
+7.3 Integration with OpenClaw
+The Vector Sentry exposes a FastAPI endpoint or can be imported directly as a Python library. Integration into OpenClaw's web search tool is a single function call:
+ 
+import sentinel_client
+ 
+def search_web(query):
+   raw_html = scrape_url(query)
+   clean_text = sentinel_client.sanitize(
+       text=raw_html,
+       sensitivity=0.8,
+       mode="redact"
+   )
+   return clean_text
+ 
+8. Machine Learning: Training & Active Learning
+
+8.1 Initial Bootstrapping (train_model.py)
+The training script bootstraps the "Day 0" classifier using publicly available datasets.
+8.1.1 Data Sources
+• deepset/prompt-injections (HuggingFace) — general prompt injection patterns
+• JasperLS/prompt-injections (HuggingFace) — additional injection samples
+• marky/jailbreak-dataset (HuggingFace) — "ignore instructions" style attacks
+ 
+8.1.2 Data Schema
+All training data is standardized to a consistent CSV format:
+• Columns: text (string), label (integer)
+• Labels: 0 = Safe, 1 = Malicious (Prompt Injection/Jailbreak)
+ 
+8.1.3 Dataset Balancing
+Real-world data is heavily skewed toward safe content. Rather than hard undersampling to force a 50/50 split (which discards valuable training signal from safe examples), the system uses stratified sampling combined with class weights in the Random Forest configuration. This preserves the full dataset while ensuring the classifier does not develop a bias toward the majority class. Safe pattern training is explicitly valuable—the classifier needs to learn what "normal" looks like to reduce false positives.
+8.1.4 Training Pipeline
+• Load and merge datasets into standardized CSV format
+• Chunk all text samples (256 tokens, 50-token overlap)
+• Vectorize chunks using all-MiniLM-L6-v2
+• Train Random Forest with class_weight="balanced"
+• Apply confidence calibration (Platt scaling) so output scores map to meaningful probabilities
+• Save model as models/sentinel_model.pkl
+• Run precision-recall analysis on held-out test set to validate threshold selection
+ 
+8.2 Active Learning Loop (The Gym)
+The classifier improves continuously through operational use. This is the perpetual whack-a-mole of security—new attacks emerge constantly, and the model must evolve.
+8.2.1 Training Data from Operations
+Every scan generates potential training data:
+• Quarantined items: files or chunks flagged UNSAFE by any layer, logged with full vector embeddings, raw text, source, and trigger engine
+• Swarm Audit outputs: Agent A and Agent B's outputs (both safe and unsafe verdicts) become labeled training examples. Safe analysis patterns are explicitly valuable for reducing false positives.
+• Canary failures: high-value training data—confirmed prompt injection that successfully compromised an LLM
+• Agent C anomaly detections: pipeline telemetry flagged as abnormal
+ 
+8.2.2 Human Review & Feedback
+• The quarantine log (quarantine.json) lists all blocked/redacted content for human review
+• Users can mark entries as "False Positive" (was actually safe) or "False Negative" (attack was missed)
+• A retrain trigger script takes user feedback + original training data, retrains the Random Forest, and hot-swaps the new model file
+ 
+8.2.3 Community Data Contributions
+ClawGuard is open source, and the ML model's strength depends on its training data—like virus definitions for an antivirus. Community contributions are essential but introduce a critical risk: training data poisoning. A malicious contributor could submit "safe" labels for dangerous content or "malicious" labels for benign content, degrading the classifier over time.
+The exact mechanism for safe community data contribution is under active design. Candidate approaches include: signed submissions requiring contributor identity, a maintainer-reviewed staging pipeline where contributed data is quarantined before inclusion, adversarial validation where contributed samples are tested against the existing model before acceptance, and federated learning techniques that allow model improvement without centralizing raw data. This section will be expanded in a future revision of this PRD.
+8.3 Agent C's Independent Learning Loop
+Agent C maintains a separate ML model trained on pipeline telemetry rather than code content. This is an anomaly detection model (e.g., Isolation Forest or One-Class SVM) that learns what "normal scan behavior" looks like—typical score distributions, expected timing profiles, common patterns of agreement/disagreement between pipeline stages. It improves alongside the primary classifier but uses entirely different training data and features.
+9. Data Persistence & Logging
+
+9.1 Skills Ledger (skills_db.json)
+Every skill scanned is recorded in a persistent local ledger:
+• hash: SHA-256 of the file content
+• verdict: SAFE or UNSAFE
+• layers_triggered: Which pipeline layers ran and their individual results
+• last_scanned: ISO 8601 timestamp
+• vectors: Stored embedding vectors of the file's content
+ 
+Storing vectors enables retroactive threat detection: when a new attack pattern is identified, the entire ledger can be checked against the new pattern without re-scanning the original files. This is the "zero-day retrospective" capability.
+9.2 Quarantine Log (quarantine.json)
+File: sentinel_core/quarantine_logger.py
+ 
+Whenever a file is flagged UNSAFE or a runtime chunk is BLOCKED, a detailed record is saved:
+ 
+{
+ "timestamp": "2026-02-07T...",
+ "source": "Web_Search",
+ "trigger_engine": "Vector_Sentry",
+ "layer": 4,
+ "vector_score": 0.82,
+ "raw_text": "...",
+ "vector_embedding": [0.12, -0.05, ...],
+ "pipeline_telemetry": { ... },
+ "human_review": null
+}
+ 
+The vector_embedding field is saved as a list specifically to enable retraining without re-vectorizing. The human_review field is populated by the Active Learning feedback mechanism.
+10. Configuration (config.yaml)
+
+All user-configurable settings are centralized in a single config.yaml file. The system ships with sensible defaults that work on a minimal VPS with API-only operation.
+ 
+clawguard:
+ # --- Pipeline Behavior ---
+ fail_fast: true
+ deep_audit_all: false              # Force Swarm Audit on every scan
+ auto_escalate_suspicious: true      # Auto-trigger Swarm for 0.3-0.7
+ 
+ # --- Thresholds (calibrate after training) ---
+ thresholds:
+   safe_ceiling: 0.3
+   malicious_floor: 0.7
+ 
+ # --- LLM Backends ---
+ swarm_audit:
+   agent_a:
+     provider: "huggingface"
+     model: "kimi-k2.5"
+   agent_b:
+     provider: "huggingface"
+     model: "kimi-k2.5"
+   agent_c:
+     tier: "statistical"
+     local_model: "phi-3.5-mini-Q4"
+     api_provider: "anthropic"
+     api_model: "claude-opus-4-6"
+ 
+ # --- Runtime Sentry ---
+ runtime_sentry:
+   enabled: true
+   mode: "redact"                    # redact | block | report_only
+   sensitivity: 0.8
+ 
+ # --- API Keys (loaded from .env) ---
+ # HF_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
+ 
+ # --- Emergency Stop ---
+ emergency:
+   kill_switch: false                # Manual local kill switch
+   remote_blocklist:
+     enabled: true                   # Check remote blocklist on startup
+     url: "https://clawguard.github.io/blocklist.json"
+     check_interval_minutes: 60      # How often to re-check
+     verify_signature: true           # Require signed blocklist
+     retroactive_scan: true           # Cross-ref ledger on new entries
+ 
+The report_only mode is essential for adoption. It logs everything but blocks nothing, allowing users to tune thresholds and observe the system's behavior before trusting automated blocking in production.
+11. Known Limitations & Threat Model
+
+11.1 AST Extraction Blind Spots
+The AST-based extraction strategy (Layer 2) may miss attacks encoded in control flow patterns or deeply nested dynamic string construction. While the extractor targets common dynamic patterns (exec, eval, subprocess with constructed arguments), sufficiently novel obfuscation techniques may evade extraction. This is partially mitigated by the Swarm Audit (Layer 3), which analyzes code holistically via LLM.
+11.2 Model Monoculture in Agents A and B
+Both Agents A and B default to Kimi K2.5. While the semantic air gap prevents text-level injection propagation, a sufficiently advanced adversary with knowledge of the embedding model's geometry could theoretically craft text that vectorizes into a benign-looking region of embedding space while carrying malicious intent. Agent C's independent methodology and model diversity partially mitigates this. Users with high security requirements are encouraged to configure Agents A and B on different models.
+11.3 API Dependency
+When running in API-only mode (e.g., on a minimal VPS), the Swarm Audit depends on external API availability and sends potentially sensitive code to third-party inference providers. Users handling confidential code should be aware of this trust boundary. Local model alternatives exist for all agents but require hardware beyond minimal VPS specifications.
+11.4 Threshold Calibration
+The 0.3 and 0.7 thresholds are initial values. Without proper calibration on a representative test set, they may produce excessive false positives (blocking safe content) or false negatives (passing threats). The report_only mode exists specifically to allow pre-production calibration.
+12. Emergency Stop Mechanism
+
+Security tools must account for the scenario where a novel zero-day attack bypasses all existing defenses. When this happens, response time is critical—every minute the vulnerability remains unaddressed, more instances are exposed. ClawGuard implements a multi-layered emergency stop system that allows both maintainers and individual users to respond immediately.
+12.1 The Global Blocklist (Remote Kill Switch)
+ClawGuard checks a maintainer-hosted remote blocklist on startup and at configurable intervals during operation. This allows the project maintainer to broadcast an emergency block to all connected ClawGuard instances worldwide within minutes of discovering a zero-day threat.
+12.1.1 How It Works
+• Blocklist URL: A publicly hosted JSON file (e.g., on GitHub Pages or a CDN) containing SHA-256 hashes of known-malicious files, vector signatures of newly discovered attack patterns, and optional YARA rule patches.
+• Check frequency: On startup, and every N minutes during operation (configurable, default 60 minutes). The check is a lightweight HTTP GET—negligible overhead.
+• Action on match: If a file being scanned matches a hash in the global blocklist, it is immediately flagged UNSAFE with reason "Emergency Global Block" regardless of what any other pipeline layer says. This check runs before Layer 1 (Cisco) and cannot be overridden by pipeline results.
+• Retroactive scan: When a new blocklist entry is fetched, ClawGuard automatically cross-references it against the skills_db.json ledger. If any previously-scanned-safe skill now matches a blocked hash or vector signature, a warning is raised immediately. This leverages the stored vectors for the "zero-day retrospective" capability described in Section 10.1.
+ 
+12.1.2 Blocklist Format
+{
+ "version": "2026-02-07-001",
+ "severity": "CRITICAL",
+ "entries": [
+   {
+     "type": "hash",
+     "value": "sha256:a1b2c3d4...",
+     "reason": "AMOS Stealer variant targeting ClawHub skills",
+     "added": "2026-02-07T14:30:00Z"
+   },
+   {
+     "type": "vector_signature",
+     "value": [0.12, -0.05, ...],
+     "similarity_threshold": 0.92,
+     "reason": "Novel prompt injection family - ClawHavoc wave 2",
+     "added": "2026-02-07T15:00:00Z"
+   }
+ ]
+}
+ 
+12.1.3 Trust & Integrity
+The blocklist itself is a potential attack vector—if an adversary could modify it, they could cause ClawGuard to block legitimate skills or, worse, whitelist malicious ones. Mitigations:
+• Signed payloads: The blocklist JSON should be cryptographically signed by the maintainer's key. ClawGuard verifies the signature before applying any entries. Unsigned or tampered blocklists are ignored.
+• Append-only: The blocklist only adds blocks, never removes them. Removal of a false-positive entry requires a separate, signed "allowlist" update with a higher version number.
+• Graceful offline: If the blocklist URL is unreachable, ClawGuard continues operating with the last-fetched blocklist cached locally. It does not fail open (skip the check) or fail closed (block everything).
+ 
+12.2 Local Kill Switch
+Independent of the remote blocklist, any user can immediately halt all ClawGuard operations via a local kill switch in config.yaml. Setting kill_switch: true causes ClawGuard to reject all scans with "UNSAFE — Emergency Stop Active" until the flag is manually cleared. This allows a user who suspects their instance is compromised to instantly lock down without waiting for a remote update.
+12.3 Configuration
+ # --- Emergency Stop ---
+ emergency:
+   kill_switch: false                # Manual local kill switch
+   remote_blocklist:
+     enabled: true
+     url: "https://clawguard.github.io/blocklist.json"
+     check_interval_minutes: 60
+     verify_signature: true
+     retroactive_scan: true          # Check ledger on new entries
+ 
+13. Deployment
+
+13.1 Minimum Requirements
+• Python 3.10+
+• 2 GB available RAM (for embedding model + classifier)
+• HuggingFace API key (for Swarm Audit in API mode)
+• Docker (optional, for sandbox execution in Layer 3)
+ 
+13.2 Quick Start
+# 1. Clone the repo
+git clone https://github.com/[org]/ClawGuard.git
+cd ClawGuard
+ 
+# 2. Clone Cisco base into the project
+git clone https://github.com/cisco-ai-defense/skill-scanner.git cisco_base
+ 
+# 3. Install dependencies
+pip install -r requirements.txt
+ 
+# 4. Train the initial model
+python train_model.py
+ 
+# 5. Run a scan
+python main.py scan /path/to/skill.py
+ 
+13.3 Docker (One-Click) Deployment
+For non-technical users, a docker-compose.yml provides single-command setup:
+docker-compose up -d
+ 
+14. Open Source & Community Strategy
+
+14.1 Repository Structure
+• /cisco_base - Transparency: the industry-standard static analysis foundation
+• /sentinel_core - Transparency: custom vector and ML logic, fully auditable
+• /training_data - Transparency: exactly what the model was trained on
+• /models - Pre-trained classifiers for immediate use
+• CONTRIBUTING.md - How to report new attacks and contribute training data
+• FUNDING.yml - GitHub Sponsors / Patreon links
+ 
+14.2 Sustainability Model
+• ClawGuard Open: Source code, free forever. Build it yourself.
+• ClawGuard Pro (Future): Pre-compiled, auto-updating binary with managed model updates for non-technical users.
+• Donations: Pitched as "Support the ongoing training of the AI Immune System."
+ 
+15. Implementation Roadmap
+
+Phase
+Name
+Deliverables
+Focus
+1
+Iron Dome MVP
+train_model.py, vector_sentry.py, basic CLI
+Runtime Sentry firewall for web browsing protection
+2
+The Audit Layer
+Cisco integration, main.py unified pipeline
+Layer 1 + 2 skill scanning pipeline
+3
+The Interrogation Room
+agent_swarm.py, canary_protocol.py, Agent C tiers
+Full Swarm Audit with semantic air gap
+4
+The Gym
+Active learning loop, retraining pipeline, quarantine UI
+Continuous improvement infrastructure
+5
+Community Launch
+GitHub repo, docker-compose, CONTRIBUTING.md, docs
+Open source distribution and community onboarding
+ 
+
+Appendix A: Coding Agent Prompt
+
+The following prompt can be provided to a coding agent (Claude, GPT, Cursor, Replit Agent) to initiate the build. It incorporates all architectural decisions from this PRD.
+ 
+Prompt:
+ 
+Act as a Senior Python Security Architect.
+ 
+We are building ClawGuard, an open-source multi-stage security auditing tool
+for AI Agent Skills (OpenClaw/MoltBot). It wraps the cisco-ai-defense/skill-scanner
+with custom Machine Learning and multi-agent audit layers.
+ 
+TASK 1: Setup
+- Scaffold the project structure per the PRD (Section 3).
+- Create requirements.txt with: yara-python, sentence-transformers, scikit-learn,
+ docker, rich, fastapi, chromadb, huggingface_hub.
+- Create cisco_wrapper_mock.py that simulates scan_file(path) returning
+ Struct(is_safe=bool, threats=list[str]). Add TODO for real Cisco import.
+- Create config.yaml with all configurable settings.
+ 
+TASK 2: Training Script (train_model.py)
+- Download deepset/prompt-injections from HuggingFace.
+- Vectorize text using all-MiniLM-L6-v2 with 256-token chunking.
+- Train Random Forest with class_weight='balanced' (no hard undersampling).
+- Apply Platt scaling for confidence calibration.
+- Save model to models/sentinel_model.pkl.
+ 
+TASK 3: Unified Pipeline (main.py)
+- Import Cisco scanner as library (use mock if repo not present).
+- Implement Fail Fast: Cisco static scan first. If threat detected, stop.
+- If static scan passes, run AST extraction + chunked vectorization + classifier.
+- Per-chunk MAX score aggregation (not average).
+- If score 0.3-0.7, auto-escalate to Swarm Audit.
+- Output consolidated JSON report via Rich CLI.
+- Log all results to skills_db.json.
+ 
+TASK 4: Swarm Audit (sentinel_core/agent_swarm.py)
+- Agent A: Kimi K2.5 via HF Inference API. Reads code directly.
+ Must output JSON with canary token, verdict, reasoning, data_flow, behavior_flags.
+- Vectorization Barrier: chunk Agent A's reasoning output, embed with MiniLM.
+ Destroy the text. Pass only vectors to Agent B.
+- Agent B: Kimi K2.5. Receives vectors + structured metadata only. Never sees
+ original code or Agent A's words. Audits semantic shape of reasoning.
+ Has its own distinct canary token.
+- Agent C: Three tiers (statistical/local/API). Audits pipeline telemetry,
+ not code. Has its own ML learning loop.
+- Implement canary_protocol.py with cryptographic token generation + validation.
+ 
+CONSTRAINT: Implement Fail Fast architecture throughout. Do not load heavy
+ML models or make API calls if static analysis already failed.
+ 
+Appendix B: Dependencies (requirements.txt)
+
+ 
+# Cisco Base
+yara-python
+pyyaml
+rich
+ 
+# Sentinel Core
+sentence-transformers
+scikit-learn
+chromadb
+fastapi
+uvicorn
+huggingface_hub
+ 
+# Optional
+docker                # For sandbox execution
+llama-cpp-python       # For local Agent C (C-Local tier)
+python-dotenv          # For .env API key loading
+ 
+
+— End of Document —
+Page
