@@ -1,0 +1,38 @@
+# TrollGuard — Dependencies
+#
+# Changelog:
+# [2026-02-17] Claude (Opus 4.6) — Initial creation.
+#   Mirrors PRD Appendix B with additions for NG-Lite and ET Modules.
+#   Core deps are required; optional deps have comments.
+
+# --- Core: Always Required ---
+numpy                   # NG-Lite + vector operations
+pyyaml                  # config.yaml parsing
+rich                    # CLI formatted output
+
+# --- Sentinel Core (Layer 2 + Layer 4) ---
+sentence-transformers   # all-MiniLM-L6-v2 embeddings (384-dim, CPU-optimized)
+scikit-learn            # Random Forest classifier
+joblib                  # Model serialization (included with scikit-learn)
+
+# --- API Server ---
+fastapi                 # REST API for agent integration (PRD §7.3)
+uvicorn                 # ASGI server for FastAPI
+
+# --- LLM Integration (Layer 3: Swarm Audit) ---
+huggingface_hub         # HuggingFace Inference API client
+
+# --- Cisco Base (Layer 1) ---
+# yara-python           # YARA rules engine — install when cisco_base is cloned
+
+# --- Vector Storage ---
+# chromadb              # Persistent vector DB — optional, in-memory NumPy for MVP
+
+# --- Optional: Local LLM for Agent C ---
+# llama-cpp-python      # Local LLM inference (Agent C: C-Local tier)
+
+# --- Optional: Environment ---
+python-dotenv           # .env file loading for API keys
+
+# --- Optional: Containerization ---
+# docker                # Docker SDK for sandbox execution

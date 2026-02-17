@@ -1,0 +1,1 @@
+# TrollGuard test suite

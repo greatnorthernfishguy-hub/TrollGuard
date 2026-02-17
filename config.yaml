@@ -1,0 +1,97 @@
+# ---- TrollGuard Configuration ----
+#
+# All user-configurable settings for TrollGuard's 4-layer defense pipeline.
+# Ships with sensible defaults for a minimal VPS with API-only operation.
+#
+# Changelog:
+# [2026-02-17] Claude (Opus 4.6) — Initial creation.
+#   Defaults chosen to match PRD §10.  safe_ceiling and malicious_floor
+#   are initial values requiring calibration (PRD §5.4, §11.4).
+#   report_only mode recommended for initial deployment to observe
+#   system behavior before enabling automated blocking.
+
+trollguard:
+
+  # --- Pipeline Behavior ---
+  fail_fast: true                     # Stop pipeline on first UNSAFE (PRD §2)
+  deep_audit_all: false               # Force Swarm Audit on every scan
+  auto_escalate_suspicious: true      # Auto-trigger Swarm for 0.3-0.7 scores
+
+  # --- Thresholds (CALIBRATE AFTER TRAINING — PRD §5.4, §11.4) ---
+  thresholds:
+    safe_ceiling: 0.3                 # Below this → SAFE
+    malicious_floor: 0.7              # Above this → MALICIOUS
+                                      # Between → SUSPICIOUS (escalate to Layer 3)
+
+  # --- LLM Backends (Swarm Audit — PRD §6.6) ---
+  swarm_audit:
+    agent_a:
+      provider: "huggingface"         # huggingface | local | anthropic | openai
+      model: "kimi-k2.5"
+    agent_b:
+      provider: "huggingface"
+      model: "kimi-k2.5"
+    agent_c:
+      tier: "statistical"            # statistical | local | api
+      local_model: "phi-3.5-mini-Q4" # Only used if tier: local
+      api_provider: "anthropic"       # Only used if tier: api
+      api_model: "claude-opus-4-6"
+    escalation:
+      auto_swarm_on_suspicious: true  # Auto-trigger for 0.3-0.7 scores
+      deep_audit_all: false           # Force swarm on every scan
+
+  # --- Runtime Sentry (Layer 4 — PRD §7) ---
+  runtime_sentry:
+    enabled: true
+    mode: "report_only"               # redact | block | report_only
+                                      # Start with report_only for calibration
+    sensitivity: 0.8
+    redaction_tag: "[TROLLGUARD: CONTENT REDACTED]"
+
+  # --- Embedding & Vectorization (PRD §5.3) ---
+  embedding:
+    model: "sentence-transformers/all-MiniLM-L6-v2"
+    dim: 384
+    chunk_size: 256                   # Tokens per chunk (system-wide standard)
+    chunk_overlap: 50                 # Overlap tokens between chunks
+    device: "cpu"                     # cpu | cuda | auto
+
+  # --- ML Classifier (PRD §8) ---
+  classifier:
+    model_path: "models/sentinel_model.pkl"
+    n_estimators: 200
+    class_weight: "balanced"          # Handles skewed data without undersampling
+
+  # --- NG-Lite Integration ---
+  ng_lite:
+    enabled: true
+    module_id: "trollguard"
+    state_path: "ng_lite_state.json"  # Persistence file for learned patterns
+    peer_bridge:
+      enabled: true                   # Connect to other modules via NGPeerBridge
+      shared_dir: "~/.et_modules/shared_learning"
+      sync_interval: 100              # Sync with peers every N outcomes
+
+  # --- Data Persistence (PRD §9) ---
+  persistence:
+    skills_db_path: "skills_db.json"
+    quarantine_path: "quarantine.json"
+
+  # --- API Keys (loaded from .env — NEVER commit these) ---
+  # HF_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
+
+  # --- Emergency Stop (PRD §12) ---
+  emergency:
+    kill_switch: false                # Manual local kill switch
+    remote_blocklist:
+      enabled: true                   # Check remote blocklist on startup
+      url: "https://trollguard.github.io/blocklist.json"
+      check_interval_minutes: 60      # How often to re-check
+      verify_signature: true          # Require signed blocklist
+      retroactive_scan: true          # Cross-ref ledger on new entries
+
+  # --- API Server ---
+  api:
+    enabled: true
+    host: "127.0.0.1"
+    port: 7438
