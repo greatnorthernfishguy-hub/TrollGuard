@@ -1,4 +1,4 @@
-CLAWGUARD
+TROLLGUARD
 
 Product Requirements Document
 & Detailed Technical Specification
@@ -13,17 +13,17 @@ February 2026
 
 CONFIDENTIAL DRAFT
 
-ClawGuard PRD v2.0 — CONFIDENTIAL
+TrollGuard PRD v2.0 — CONFIDENTIAL
 1. Executive Summary
 
-ClawGuard is a local, open-source security layer that validates AI Agent Skills (OpenClaw/MoltBot) and monitors runtime I/O against adversarial attacks. It operates on a "Zero Trust for Text" philosophy: every string of text entering the system is treated as a potential prompt injection until mathematically proven otherwise.
+TrollGuard is a local, open-source security layer that validates AI Agent Skills (OpenClaw/MoltBot) and monitors runtime I/O against adversarial attacks. It operates on a "Zero Trust for Text" philosophy: every string of text entering the system is treated as a potential prompt injection until mathematically proven otherwise.
 The system implements a "Fail Fast" multi-stage pipeline. Simple, known threats are caught instantly by static signature analysis (leveraging the Cisco AI Defense skill-scanner). Complex, novel logic attacks are caught by deep semantic vector analysis and a unique multi-agent interrogation architecture that uses a "semantic air gap" to prevent malicious payloads from propagating between audit stages.
-ClawGuard is designed for hardware-constrained environments. The entire system can run on a modest VPS with no GPU, using cloud inference APIs where local compute is unavailable, with configurable toggles for local vs. API-based operation at every stage.
+TrollGuard is designed for hardware-constrained environments. The entire system can run on a modest VPS with no GPU, using cloud inference APIs where local compute is unavailable, with configurable toggles for local vs. API-based operation at every stage.
 1.1 Core Innovation: The Semantic Air Gap
-The central architectural innovation of ClawGuard is the semantic air gap in the Swarm Audit module. Prompt injection is a text-level attack: it works by injecting words that override an AI model's instructions. ClawGuard neutralizes this propagation vector by converting intermediate analysis from one audit agent into vector embeddings before passing it to the next. The receiving agent never sees language—it sees mathematics. Malicious instructions that successfully compromised the first agent cannot propagate because they no longer exist as parseable text. This is an air gap built from linear algebra.
+The central architectural innovation of TrollGuard is the semantic air gap in the Swarm Audit module. Prompt injection is a text-level attack: it works by injecting words that override an AI model's instructions. TrollGuard neutralizes this propagation vector by converting intermediate analysis from one audit agent into vector embeddings before passing it to the next. The receiving agent never sees language—it sees mathematics. Malicious instructions that successfully compromised the first agent cannot propagate because they no longer exist as parseable text. This is an air gap built from linear algebra.
 2. System Architecture Overview
 
-ClawGuard functions as a single Python application that imports external engines as libraries. It implements a four-layer defense pipeline, with each layer using a fundamentally different methodology to catch threats the previous layer missed.
+TrollGuard functions as a single Python application that imports external engines as libraries. It implements a four-layer defense pipeline, with each layer using a fundamentally different methodology to catch threats the previous layer missed.
 Layer
 Engine
 Role
@@ -77,7 +77,7 @@ Docker (optional, for sandbox execution)
  
 3. Project Structure
 
-/ClawGuard
+/TrollGuard
 ├── /cisco_base                  # Fork of cisco-ai-defense/skill-scanner
 ├── /sentinel_core               # Custom semantic analysis modules
 │   ├── vector_sentry.py         # Embedding, chunking, & vector logic
@@ -126,7 +126,7 @@ The system does not vectorize entire files as raw strings. Instead, it uses Pyth
  
 For non-Python files (.yaml, .md), the full text content is extracted directly, since these formats lack the structural separation that AST parsing provides.
 5.3 Chunked Vectorization
-Design Principle: All vectorization throughout ClawGuard is chunked by default. This is a system-wide rule, not a per-module decision. Exceptions must be explicitly justified.
+Design Principle: All vectorization throughout TrollGuard is chunked by default. This is a system-wide rule, not a per-module decision. Exceptions must be explicitly justified.
  
 • Chunk size: 256 tokens maximum
 • Overlap: 50 tokens between adjacent chunks (prevents attacks split across a naive boundary from evading detection)
@@ -155,7 +155,7 @@ Return UNSAFE. Log to quarantine.json with full vectors for retraining.
 Important: The 0.3 and 0.7 thresholds are initial values that require calibration. Before production use, a precision-recall analysis on a held-out test set must be performed. A confidence calibration step (Platt scaling or isothermal regression) should be applied after training so these thresholds map to meaningful probabilities rather than arbitrary cutoffs.
 6. Layer 3: The Swarm Audit (The Interrogation Room)
 
-This is ClawGuard's most distinctive module and its primary architectural innovation. It implements a multi-agent audit pipeline with a semantic air gap that prevents malicious payloads from propagating between audit stages. The Swarm Audit triggers automatically for any file scoring in the 0.3–0.7 suspicious band from Layer 2, or on-demand for any file when "Deep Audit" mode is enabled.
+This is TrollGuard's most distinctive module and its primary architectural innovation. It implements a multi-agent audit pipeline with a semantic air gap that prevents malicious payloads from propagating between audit stages. The Swarm Audit triggers automatically for any file scoring in the 0.3–0.7 suspicious band from Layer 2, or on-demand for any file when "Deep Audit" mode is enabled.
 6.1 Agent A: The Sacrifice
 File: sentinel_core/agent_swarm.py
  
@@ -283,7 +283,7 @@ PASS. Return text as-is.
 Normal content.
 0.3 – 0.7
 SUSPICIOUS
-REDACT. Replace chunk with "[CLAWGUARD: CONTENT REDACTED]".
+REDACT. Replace chunk with "[TROLLGUARD: CONTENT REDACTED]".
 Prevents grey-area content without breaking the entire workflow.
 > 0.7
 MALICIOUS
@@ -344,7 +344,7 @@ Every scan generates potential training data:
 • A retrain trigger script takes user feedback + original training data, retrains the Random Forest, and hot-swaps the new model file
  
 8.2.3 Community Data Contributions
-ClawGuard is open source, and the ML model's strength depends on its training data—like virus definitions for an antivirus. Community contributions are essential but introduce a critical risk: training data poisoning. A malicious contributor could submit "safe" labels for dangerous content or "malicious" labels for benign content, degrading the classifier over time.
+TrollGuard is open source, and the ML model's strength depends on its training data—like virus definitions for an antivirus. Community contributions are essential but introduce a critical risk: training data poisoning. A malicious contributor could submit "safe" labels for dangerous content or "malicious" labels for benign content, degrading the classifier over time.
 The exact mechanism for safe community data contribution is under active design. Candidate approaches include: signed submissions requiring contributor identity, a maintainer-reviewed staging pipeline where contributed data is quarantined before inclusion, adversarial validation where contributed samples are tested against the existing model before acceptance, and federated learning techniques that allow model improvement without centralizing raw data. This section will be expanded in a future revision of this PRD.
 8.3 Agent C's Independent Learning Loop
 Agent C maintains a separate ML model trained on pipeline telemetry rather than code content. This is an anomaly detection model (e.g., Isolation Forest or One-Class SVM) that learns what "normal scan behavior" looks like—typical score distributions, expected timing profiles, common patterns of agreement/disagreement between pipeline stages. It improves alongside the primary classifier but uses entirely different training data and features.
@@ -381,7 +381,7 @@ The vector_embedding field is saved as a list specifically to enable retraining 
 
 All user-configurable settings are centralized in a single config.yaml file. The system ships with sensible defaults that work on a minimal VPS with API-only operation.
  
-clawguard:
+trollguard:
  # --- Pipeline Behavior ---
  fail_fast: true
  deep_audit_all: false              # Force Swarm Audit on every scan
@@ -420,7 +420,7 @@ clawguard:
    kill_switch: false                # Manual local kill switch
    remote_blocklist:
      enabled: true                   # Check remote blocklist on startup
-     url: "https://clawguard.github.io/blocklist.json"
+     url: "https://trollguard.github.io/blocklist.json"
      check_interval_minutes: 60      # How often to re-check
      verify_signature: true           # Require signed blocklist
      retroactive_scan: true           # Cross-ref ledger on new entries
@@ -438,14 +438,14 @@ When running in API-only mode (e.g., on a minimal VPS), the Swarm Audit depends 
 The 0.3 and 0.7 thresholds are initial values. Without proper calibration on a representative test set, they may produce excessive false positives (blocking safe content) or false negatives (passing threats). The report_only mode exists specifically to allow pre-production calibration.
 12. Emergency Stop Mechanism
 
-Security tools must account for the scenario where a novel zero-day attack bypasses all existing defenses. When this happens, response time is critical—every minute the vulnerability remains unaddressed, more instances are exposed. ClawGuard implements a multi-layered emergency stop system that allows both maintainers and individual users to respond immediately.
+Security tools must account for the scenario where a novel zero-day attack bypasses all existing defenses. When this happens, response time is critical—every minute the vulnerability remains unaddressed, more instances are exposed. TrollGuard implements a multi-layered emergency stop system that allows both maintainers and individual users to respond immediately.
 12.1 The Global Blocklist (Remote Kill Switch)
-ClawGuard checks a maintainer-hosted remote blocklist on startup and at configurable intervals during operation. This allows the project maintainer to broadcast an emergency block to all connected ClawGuard instances worldwide within minutes of discovering a zero-day threat.
+TrollGuard checks a maintainer-hosted remote blocklist on startup and at configurable intervals during operation. This allows the project maintainer to broadcast an emergency block to all connected TrollGuard instances worldwide within minutes of discovering a zero-day threat.
 12.1.1 How It Works
 • Blocklist URL: A publicly hosted JSON file (e.g., on GitHub Pages or a CDN) containing SHA-256 hashes of known-malicious files, vector signatures of newly discovered attack patterns, and optional YARA rule patches.
 • Check frequency: On startup, and every N minutes during operation (configurable, default 60 minutes). The check is a lightweight HTTP GET—negligible overhead.
 • Action on match: If a file being scanned matches a hash in the global blocklist, it is immediately flagged UNSAFE with reason "Emergency Global Block" regardless of what any other pipeline layer says. This check runs before Layer 1 (Cisco) and cannot be overridden by pipeline results.
-• Retroactive scan: When a new blocklist entry is fetched, ClawGuard automatically cross-references it against the skills_db.json ledger. If any previously-scanned-safe skill now matches a blocked hash or vector signature, a warning is raised immediately. This leverages the stored vectors for the "zero-day retrospective" capability described in Section 10.1.
+• Retroactive scan: When a new blocklist entry is fetched, TrollGuard automatically cross-references it against the skills_db.json ledger. If any previously-scanned-safe skill now matches a blocked hash or vector signature, a warning is raised immediately. This leverages the stored vectors for the "zero-day retrospective" capability described in Section 10.1.
  
 12.1.2 Blocklist Format
 {
@@ -469,20 +469,20 @@ ClawGuard checks a maintainer-hosted remote blocklist on startup and at configur
 }
  
 12.1.3 Trust & Integrity
-The blocklist itself is a potential attack vector—if an adversary could modify it, they could cause ClawGuard to block legitimate skills or, worse, whitelist malicious ones. Mitigations:
-• Signed payloads: The blocklist JSON should be cryptographically signed by the maintainer's key. ClawGuard verifies the signature before applying any entries. Unsigned or tampered blocklists are ignored.
+The blocklist itself is a potential attack vector—if an adversary could modify it, they could cause TrollGuard to block legitimate skills or, worse, whitelist malicious ones. Mitigations:
+• Signed payloads: The blocklist JSON should be cryptographically signed by the maintainer's key. TrollGuard verifies the signature before applying any entries. Unsigned or tampered blocklists are ignored.
 • Append-only: The blocklist only adds blocks, never removes them. Removal of a false-positive entry requires a separate, signed "allowlist" update with a higher version number.
-• Graceful offline: If the blocklist URL is unreachable, ClawGuard continues operating with the last-fetched blocklist cached locally. It does not fail open (skip the check) or fail closed (block everything).
+• Graceful offline: If the blocklist URL is unreachable, TrollGuard continues operating with the last-fetched blocklist cached locally. It does not fail open (skip the check) or fail closed (block everything).
  
 12.2 Local Kill Switch
-Independent of the remote blocklist, any user can immediately halt all ClawGuard operations via a local kill switch in config.yaml. Setting kill_switch: true causes ClawGuard to reject all scans with "UNSAFE — Emergency Stop Active" until the flag is manually cleared. This allows a user who suspects their instance is compromised to instantly lock down without waiting for a remote update.
+Independent of the remote blocklist, any user can immediately halt all TrollGuard operations via a local kill switch in config.yaml. Setting kill_switch: true causes TrollGuard to reject all scans with "UNSAFE — Emergency Stop Active" until the flag is manually cleared. This allows a user who suspects their instance is compromised to instantly lock down without waiting for a remote update.
 12.3 Configuration
  # --- Emergency Stop ---
  emergency:
    kill_switch: false                # Manual local kill switch
    remote_blocklist:
      enabled: true
-     url: "https://clawguard.github.io/blocklist.json"
+     url: "https://trollguard.github.io/blocklist.json"
      check_interval_minutes: 60
      verify_signature: true
      retroactive_scan: true          # Check ledger on new entries
@@ -497,8 +497,8 @@ Independent of the remote blocklist, any user can immediately halt all ClawGuard
  
 13.2 Quick Start
 # 1. Clone the repo
-git clone https://github.com/[org]/ClawGuard.git
-cd ClawGuard
+git clone https://github.com/[org]/TrollGuard.git
+cd TrollGuard
  
 # 2. Clone Cisco base into the project
 git clone https://github.com/cisco-ai-defense/skill-scanner.git cisco_base
@@ -527,8 +527,8 @@ docker-compose up -d
 • FUNDING.yml - GitHub Sponsors / Patreon links
  
 14.2 Sustainability Model
-• ClawGuard Open: Source code, free forever. Build it yourself.
-• ClawGuard Pro (Future): Pre-compiled, auto-updating binary with managed model updates for non-technical users.
+• TrollGuard Open: Source code, free forever. Build it yourself.
+• TrollGuard Pro (Future): Pre-compiled, auto-updating binary with managed model updates for non-technical users.
 • Donations: Pitched as "Support the ongoing training of the AI Immune System."
  
 15. Implementation Roadmap
@@ -567,7 +567,7 @@ Prompt:
  
 Act as a Senior Python Security Architect.
  
-We are building ClawGuard, an open-source multi-stage security auditing tool
+We are building TrollGuard, an open-source multi-stage security auditing tool
 for AI Agent Skills (OpenClaw/MoltBot). It wraps the cisco-ai-defense/skill-scanner
 with custom Machine Learning and multi-agent audit layers.
  

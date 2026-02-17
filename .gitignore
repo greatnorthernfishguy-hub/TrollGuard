@@ -1,0 +1,54 @@
+# TrollGuard .gitignore
+#
+# Changelog:
+# [2026-02-17] Claude (Opus 4.6) — Initial creation.
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment / secrets — NEVER commit these
+.env
+.env.local
+*.pem
+*.key
+
+# ML models (too large for git; download or train locally)
+models/*.pkl
+models/*.joblib
+
+# Runtime data (generated during operation)
+skills_db.json
+quarantine.json
+ng_lite_state.json
+
+# Cisco base (cloned separately per PRD §13.2)
+cisco_base/
+
+# Training data (downloaded separately)
+training_data/*.csv
+training_data/*.parquet
+
+# ET Module Manager shared learning (local state)
+.et_modules/
+
+# OS
+.DS_Store
+Thumbs.db
