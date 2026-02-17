@@ -145,6 +145,8 @@ deploy_files() {
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
     cp "$SCRIPT_DIR/main.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/api.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/trollguard_hook.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/config.yaml" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/ng_lite.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/ng_peer_bridge.py" "$INSTALL_DIR/"
@@ -229,7 +231,7 @@ After=network.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$PYTHON -m uvicorn main:app --host $API_HOST --port $API_PORT
+ExecStart=$PYTHON -m uvicorn api:app --host $API_HOST --port $API_PORT
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
