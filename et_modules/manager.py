@@ -125,11 +125,22 @@ class ETModuleManager:
         manager.register(manifest)
     """
 
-    # Known install locations to scan for modules
+    # Known install locations to scan for modules.
+    # Primary paths match the home-directory layout used by the
+    # E-T Systems ecosystem.  Legacy /opt/ paths are kept as
+    # fallbacks for system-level deployments.
+    #
+    # [2026-02-19] Claude (Opus 4.6) — Updated to match actual
+    #   install locations: ~/NeuroGraph, ~/TrollGuard, etc.
+    #   Previous paths assumed /opt/ and ~/.openclaw/ which didn't
+    #   match the user's real directory structure.
     KNOWN_LOCATIONS = [
-        "~/.openclaw/skills/neurograph",      # NeuroGraph
-        "/opt/inference-difference",           # The-Inference-Difference
-        "/opt/trollguard",                     # TrollGuard
+        "~/NeuroGraph",                       # NeuroGraph (primary)
+        "~/.openclaw/skills/neurograph",      # NeuroGraph (legacy)
+        "~/The-Inference-Difference",         # The-Inference-Difference (primary)
+        "/opt/inference-difference",           # The-Inference-Difference (legacy)
+        "~/TrollGuard",                       # TrollGuard (primary)
+        "/opt/trollguard",                     # TrollGuard (legacy)
         "~/.et_modules/modules",              # Generic module install dir
     ]
 

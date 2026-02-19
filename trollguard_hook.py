@@ -358,7 +358,8 @@ class TrollGuardFilter:
             os.environ.get("TROLLGUARD_CONFIG"),
             str(self._workspace_dir / "config.yaml"),
             "config.yaml",
-            "/opt/trollguard/config.yaml",
+            os.path.expanduser("~/TrollGuard/config.yaml"),
+            "/opt/trollguard/config.yaml",  # legacy system-level path
         ]
 
         for p in paths_to_try:
