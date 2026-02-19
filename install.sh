@@ -16,7 +16,7 @@
 #   ./install.sh --status     # Check installation status
 #
 # Environment variable overrides:
-#   TG_INSTALL_DIR   — Installation path (default: /opt/trollguard)
+#   TG_INSTALL_DIR   — Installation path (default: ~/TrollGuard)
 #   TG_PORT          — API port (default: 7438)
 #   TG_HOST          — Bind host (default: 127.0.0.1)
 #
@@ -34,7 +34,7 @@
 set -euo pipefail
 
 # --- Configuration (overridable via environment) ---
-INSTALL_DIR="${TG_INSTALL_DIR:-/opt/trollguard}"
+INSTALL_DIR="${TG_INSTALL_DIR:-$HOME/TrollGuard}"
 API_PORT="${TG_PORT:-7438}"
 API_HOST="${TG_HOST:-127.0.0.1}"
 SERVICE_NAME="trollguard"
@@ -87,16 +87,22 @@ detect_environment() {
         info "No NVIDIA GPU detected (CPU-only mode)"
     fi
 
-    # Check for existing NeuroGraph
-    if [ -d "$HOME/.openclaw/skills/neurograph" ]; then
+    # Check for existing NeuroGraph (home-dir primary, legacy fallback)
+    if [ -d "$HOME/NeuroGraph" ]; then
+        info "NeuroGraph detected at ~/NeuroGraph"
+        HAS_NEUROGRAPH=true
+    elif [ -d "$HOME/.openclaw/skills/neurograph" ]; then
         info "NeuroGraph detected at ~/.openclaw/skills/neurograph"
         HAS_NEUROGRAPH=true
     else
         HAS_NEUROGRAPH=false
     fi
 
-    # Check for The-Inference-Difference
-    if [ -d "/opt/inference-difference" ]; then
+    # Check for The-Inference-Difference (home-dir primary, legacy fallback)
+    if [ -d "$HOME/The-Inference-Difference" ]; then
+        info "The-Inference-Difference detected at ~/The-Inference-Difference"
+        HAS_TID=true
+    elif [ -d "/opt/inference-difference" ]; then
         info "The-Inference-Difference detected at /opt/inference-difference"
         HAS_TID=true
     else
@@ -137,9 +143,13 @@ install_deps() {
 deploy_files() {
     info "Deploying TrollGuard to $INSTALL_DIR..."
 
-    # Create install directory
-    sudo mkdir -p "$INSTALL_DIR"
-    sudo chown "$(whoami):$(whoami)" "$INSTALL_DIR"
+    # Create install directory (use sudo only if outside $HOME)
+    if [[ "$INSTALL_DIR" == "$HOME"* ]]; then
+        mkdir -p "$INSTALL_DIR"
+    else
+        sudo mkdir -p "$INSTALL_DIR"
+        sudo chown "$(whoami):$(whoami)" "$INSTALL_DIR"
+    fi
 
     # Copy project files
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
