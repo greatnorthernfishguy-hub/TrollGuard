@@ -21,6 +21,28 @@ operating silently in the background.
 PRD reference: Section 7.3 — Integration with OpenClaw
 
 # ---- Changelog ----
+# [2026-02-19] Claude (Opus 4.6) — Grok audit claim: "silent fallback in _init_sentry()".
+#   Claim:  If VectorSentry init fails and _sentry is None, sanitize() "quietly
+#           returns SAFE verdict — bypassing the entire immune system.  Zero
+#           protection, zero log of failure."
+#   Status: NOT VALID — no code change required.
+#   Why:    (a) sanitize() does NOT return a "SAFE verdict" — it returns the raw
+#               text unchanged.  No ScanResult object with verdict=SAFE is
+#               fabricated; the caller gets unsanitized text, which is a
+#               different semantic than "classified as safe."
+#           (b) "Zero log of failure" is factually wrong.  Two logger.warning()
+#               calls already cover this path:
+#               - _init_components() line 443: "VectorSentry not available: <error>"
+#                 (logged once at init)
+#               - sanitize() line 205: "Sentry not initialized, passing text
+#                 through unsanitized" (logged on every call)
+#           (c) The fail-open behavior is an intentional, documented design
+#               choice (see comment on line 204: "fail open for availability").
+#               In an agent framework, fail-closed would render the entire
+#               agent non-functional when a dependency is missing.  The
+#               tradeoff favors availability, and the warnings ensure
+#               operators are aware of the degraded state.
+#
 # [2026-02-19] Claude (Opus 4.6) — Grok security audit: thread safety + file locking.
 #   What: Added threading.RLock for sentry/model access, fcntl on event
 #         JSONL writes, and explicit error logging on init failures.
