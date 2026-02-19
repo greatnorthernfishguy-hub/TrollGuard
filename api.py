@@ -20,6 +20,25 @@ verdict.
 PRD reference: Section 7.3 — Integration with OpenClaw
 
 # ---- Changelog ----
+# [2026-02-19] Claude (Opus 4.6) — Grok security audit: non-blocking scans + background tasks.
+#   What: Wrapped blocking scan calls in asyncio.to_thread() so ML
+#         inference and file I/O don't block the event loop.  Added
+#         POST /scan/file/async endpoint that accepts a file scan
+#         request and returns a task_id immediately; the scan runs in
+#         a background thread and results are polled via GET /task/{id}.
+#   Why:  Grok flagged that synchronous scan calls in async endpoints
+#         block the entire uvicorn event loop, stalling all concurrent
+#         requests during a deep audit (Layer 3 Swarm can take seconds).
+#
+#   Claude's note: Grok suggested making the core scan() method itself
+#   async.  That would require rewriting the entire pipeline, VectorSentry,
+#   and SwarmAudit to be async — high effort, low value since the real
+#   bottleneck is CPU-bound ML inference (NumPy/sklearn) which doesn't
+#   benefit from async I/O.  asyncio.to_thread() is the right tool here:
+#   it moves blocking work to a thread pool while keeping the event loop
+#   free.  Full async rewrite deferred to Phase 3 if profiling shows
+#   I/O-bound bottlenecks.
+#
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   What: FastAPI application with scan/text, scan/file, health, stats,
 #         and quarantine review endpoints.  Singleton pipeline instance
@@ -41,8 +60,10 @@ PRD reference: Section 7.3 — Integration with OpenClaw
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -158,6 +179,18 @@ class ReviewRequest(BaseModel):
     verdict: str = Field(..., description="'false_positive', 'true_positive', 'false_negative', or 'confirmed_threat'")
     reviewer: str = Field("api_user", description="Who is submitting the review")
 
+class AsyncScanResponse(BaseModel):
+    """Response from POST /scan/file/async — returns immediately."""
+    task_id: str = Field(..., description="Unique task ID for polling results")
+    status: str = Field("pending", description="Task status: pending, running, completed, failed")
+
+class TaskStatusResponse(BaseModel):
+    """Response from GET /task/{task_id}."""
+    task_id: str
+    status: str = Field(..., description="pending, running, completed, or failed")
+    result: Optional[Dict[str, Any]] = Field(None, description="Scan result when completed")
+    error: Optional[str] = Field(None, description="Error message if failed")
+
 class HealthResponse(BaseModel):
     """Response from GET /health."""
     status: str
@@ -165,6 +198,28 @@ class HealthResponse(BaseModel):
     ng_lite_connected: bool
     peer_bridge_connected: bool
     pipeline_ready: bool
+
+
+# ---------------------------------------------------------------------------
+# Background task store (in-memory, bounded)
+# ---------------------------------------------------------------------------
+
+_task_results: Dict[str, Dict[str, Any]] = {}
+_TASK_STORE_MAX = 200
+
+
+def _prune_task_store() -> None:
+    """Keep task store bounded by evicting oldest completed tasks."""
+    if len(_task_results) <= _TASK_STORE_MAX:
+        return
+    completed = [
+        (tid, t) for tid, t in _task_results.items()
+        if t["status"] in ("completed", "failed")
+    ]
+    completed.sort(key=lambda x: x[1].get("finished_at", 0))
+    to_remove = len(_task_results) - _TASK_STORE_MAX
+    for tid, _ in completed[:to_remove]:
+        del _task_results[tid]
 
 
 # ---------------------------------------------------------------------------
@@ -196,30 +251,35 @@ async def scan_text(request: ScanTextRequest):
     """
     pipeline = _get_pipeline()
 
-    # Allow per-request mode override
-    if request.mode and _sentry is not None:
-        original_mode = _sentry.config["mode"]
-        _sentry.config["mode"] = request.mode
-    else:
-        original_mode = None
+    def _do_text_scan():
+        # Allow per-request mode override
+        if request.mode and _sentry is not None:
+            original_mode = _sentry.config["mode"]
+            _sentry.config["mode"] = request.mode
+        else:
+            original_mode = None
 
-    result = _sentry.scan(request.text, source=request.source)
+        result = _sentry.scan(request.text, source=request.source)
 
-    # Restore original mode
-    if original_mode is not None:
-        _sentry.config["mode"] = original_mode
+        # Restore original mode
+        if original_mode is not None:
+            _sentry.config["mode"] = original_mode
 
-    # Quarantine if malicious
-    if result.verdict.value == "MALICIOUS" and _quarantine is not None:
-        best_chunk = max(result.flagged_chunks, key=lambda c: c.score) if result.flagged_chunks else None
-        _quarantine.log_incident(
-            source=request.source,
-            trigger_engine="vector_sentry_api",
-            layer=4,
-            vector_score=result.max_score,
-            raw_text=request.text[:5000],
-            vector_embedding=best_chunk.embedding.tolist() if best_chunk and best_chunk.embedding is not None else None,
-        )
+        # Quarantine if malicious
+        if result.verdict.value == "MALICIOUS" and _quarantine is not None:
+            best_chunk = max(result.flagged_chunks, key=lambda c: c.score) if result.flagged_chunks else None
+            _quarantine.log_incident(
+                source=request.source,
+                trigger_engine="vector_sentry_api",
+                layer=4,
+                vector_score=result.max_score,
+                raw_text=request.text[:5000],
+                vector_embedding=best_chunk.embedding.tolist() if best_chunk and best_chunk.embedding is not None else None,
+            )
+        return result
+
+    # Run blocking ML scan in thread pool to avoid stalling the event loop
+    result = await asyncio.to_thread(_do_text_scan)
 
     return ScanTextResponse(
         verdict=result.verdict.value,
@@ -249,7 +309,8 @@ async def scan_file(request: ScanFileRequest):
     if not Path(request.file_path).exists():
         raise HTTPException(status_code=404, detail=f"File not found: {request.file_path}")
 
-    report = pipeline.scan_file(request.file_path)
+    # Run blocking pipeline in thread pool
+    report = await asyncio.to_thread(pipeline.scan_file, request.file_path)
 
     return ScanFileResponse(
         file_path=report.file_path,
@@ -336,4 +397,107 @@ async def quarantine_review(request: ReviewRequest):
     if not success:
         raise HTTPException(status_code=404, detail=f"Incident not found: {request.incident_id}")
 
-    return {"status": "reviewed", "incident_id": request.incident_id, "verdict": request.verdict}
+    # Check if enough reviews have accumulated to trigger retraining
+    retrain_status = _quarantine.check_retrain_ready()
+    result = {
+        "status": "reviewed",
+        "incident_id": request.incident_id,
+        "verdict": request.verdict,
+        "retrain_ready": retrain_status["ready"],
+    }
+
+    if retrain_status["ready"]:
+        logger.info(
+            "Retrain recommended: %d reviewed samples (threshold=%d)",
+            retrain_status["training_samples"],
+            retrain_status["threshold"],
+        )
+        result["retrain_info"] = retrain_status
+
+    return result
+
+
+@app.post("/scan/file/async", response_model=AsyncScanResponse)
+async def scan_file_async(request: ScanFileRequest):
+    """Submit a file scan as a background task.
+
+    Returns immediately with a task_id.  Poll GET /task/{task_id}
+    for results.  Use this for deep audits (Layer 3 Swarm) that
+    may take several seconds — the caller isn't blocked waiting.
+    """
+    pipeline = _get_pipeline()
+
+    if not Path(request.file_path).exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {request.file_path}")
+
+    task_id = str(uuid.uuid4())
+    _task_results[task_id] = {"status": "pending", "result": None, "error": None}
+    _prune_task_store()
+
+    async def _run_scan():
+        _task_results[task_id]["status"] = "running"
+        try:
+            report = await asyncio.to_thread(pipeline.scan_file, request.file_path)
+            _task_results[task_id]["status"] = "completed"
+            _task_results[task_id]["finished_at"] = time.time()
+            _task_results[task_id]["result"] = {
+                "file_path": report.file_path,
+                "file_hash": report.file_hash,
+                "final_verdict": report.final_verdict.value,
+                "layers_run": report.layers_run,
+                "total_time_ms": round(report.total_time_ms, 2),
+                "fail_fast_triggered": report.fail_fast_triggered,
+                "layer_results": [
+                    {
+                        "layer": lr.layer,
+                        "name": lr.name,
+                        "verdict": lr.verdict.value,
+                        "score": round(lr.score, 4),
+                        "elapsed_ms": round(lr.elapsed_ms, 2),
+                    }
+                    for lr in report.layer_results
+                ],
+            }
+        except Exception as e:
+            _task_results[task_id]["status"] = "failed"
+            _task_results[task_id]["finished_at"] = time.time()
+            _task_results[task_id]["error"] = str(e)
+            logger.error("Background scan failed for %s: %s", request.file_path, e)
+
+    asyncio.create_task(_run_scan())
+
+    return AsyncScanResponse(task_id=task_id, status="pending")
+
+
+@app.get("/task/{task_id}", response_model=TaskStatusResponse)
+async def get_task_status(task_id: str):
+    """Poll for the result of an async scan task."""
+    if task_id not in _task_results:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    task = _task_results[task_id]
+    return TaskStatusResponse(
+        task_id=task_id,
+        status=task["status"],
+        result=task.get("result"),
+        error=task.get("error"),
+    )
+
+
+@app.get("/retrain/status")
+async def retrain_status():
+    """Check if enough reviewed quarantine data has accumulated for retraining.
+
+    Use this endpoint in a cron job or CI pipeline to decide whether
+    to trigger train_model.py.  The active learning loop:
+      1. Incidents are quarantined during scanning
+      2. Humans review them via POST /quarantine/review
+      3. This endpoint signals when the reviewed pool is large enough
+      4. External process runs train_model.py with the new data
+    """
+    if _quarantine is None:
+        raise HTTPException(status_code=503, detail="Quarantine logger not initialized")
+
+    status = _quarantine.check_retrain_ready()
+    status["training_data_available"] = len(_quarantine.export_training_data())
+    return status

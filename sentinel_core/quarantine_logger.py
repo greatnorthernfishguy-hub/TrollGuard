@@ -14,6 +14,30 @@ The quarantine log serves dual purposes:
 PRD reference: Section 9.2 — Quarantine Log
 
 # ---- Changelog ----
+# [2026-02-19] Claude (Opus 4.6) — Grok security audit: retrain trigger.
+#   What: Added retrain readiness check — check_retrain_ready() returns
+#         True when enough reviewed incidents have accumulated to warrant
+#         a model retrain.  Configurable threshold (default 50).
+#   Why:  Grok flagged that the quarantine review -> retrain loop has no
+#         automatic trigger.  Reviewed incidents accumulate but nothing
+#         signals train_model.py to run.  This adds the "when" signal.
+#   How:  count(reviewed) >= threshold -> retrain_ready=True.  The API
+#         quarantine/review endpoint checks after each review and logs
+#         a retrain_recommended event.  Actual retraining is still
+#         external (cron, CI, or manual) — this provides the signal.
+#
+# [2026-02-19] Claude (Opus 4.6) — Grok security audit: fcntl file locking.
+#   What: Added fcntl.LOCK_EX/LOCK_SH around all JSONL file operations
+#         (log_incident appends, _read_all reads, _write_all rewrites).
+#   Why:  Grok flagged race conditions on JSONL appends/sync reads when
+#         multiple processes (CLI + API + hook) access quarantine.json
+#         concurrently.  Without locking, concurrent writers can produce
+#         interleaved partial JSON lines, and concurrent read-modify-write
+#         in mark_reviewed() can lose updates.
+#   How:  fcntl.flock() with LOCK_EX for writes and LOCK_SH for reads.
+#         fcntl is POSIX-only; on non-POSIX systems the locks are no-ops
+#         (logged at DEBUG), preserving portability for dev on Windows.
+#
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   What: QuarantineLogger class with log_incident(), get_pending(),
 #         mark_reviewed(), and export_training_data() methods.
@@ -33,13 +57,40 @@ import json
 import logging
 import os
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 import numpy as np
 
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
+
 logger = logging.getLogger("trollguard.quarantine_logger")
+
+
+@contextmanager
+def _file_lock(f, exclusive: bool = True) -> Generator[None, None, None]:
+    """Acquire an fcntl advisory lock on an open file descriptor.
+
+    Args:
+        f: An open file object.
+        exclusive: True for LOCK_EX (write), False for LOCK_SH (read).
+    """
+    if _HAS_FCNTL:
+        op = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(f.fileno(), op)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    else:
+        logger.debug("fcntl unavailable — file locking skipped (non-POSIX OS)")
+        yield
 
 
 class QuarantineLogger:
@@ -64,10 +115,15 @@ class QuarantineLogger:
         ql.mark_reviewed(incident_id, "false_positive")
     """
 
-    def __init__(self, quarantine_path: str = "quarantine.json"):
+    def __init__(
+        self,
+        quarantine_path: str = "quarantine.json",
+        retrain_threshold: int = 50,
+    ):
         self._path = Path(quarantine_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._incident_count = 0
+        self._retrain_threshold = retrain_threshold
 
     def log_incident(
         self,
@@ -117,7 +173,9 @@ class QuarantineLogger:
 
         try:
             with open(self._path, "a") as f:
-                f.write(json.dumps(record, default=str) + "\n")
+                with _file_lock(f, exclusive=True):
+                    f.write(json.dumps(record, default=str) + "\n")
+                    f.flush()
             logger.info("Quarantined: %s (%s, layer=%d, score=%.3f)",
                         incident_id, trigger_engine, layer, vector_score)
         except OSError as e:
@@ -205,6 +263,32 @@ class QuarantineLogger:
 
         return training
 
+    def check_retrain_ready(self) -> Dict[str, Any]:
+        """Check if enough reviewed incidents have accumulated for retraining.
+
+        Returns a dict with:
+            ready: True if reviewed count >= retrain_threshold.
+            reviewed_count: Number of reviewed incidents.
+            threshold: The configured threshold.
+            training_samples: Number of usable training samples.
+        """
+        records = self._read_all()
+        reviewed = [r for r in records if r.get("human_review") is not None]
+
+        # Count usable samples (those with valid verdicts)
+        valid_verdicts = {"false_positive", "true_positive", "false_negative", "confirmed_threat"}
+        usable = [
+            r for r in reviewed
+            if r["human_review"].get("verdict") in valid_verdicts
+        ]
+
+        return {
+            "ready": len(usable) >= self._retrain_threshold,
+            "reviewed_count": len(reviewed),
+            "training_samples": len(usable),
+            "threshold": self._retrain_threshold,
+        }
+
     def get_stats(self) -> Dict[str, Any]:
         """Logger statistics."""
         records = self._read_all()
@@ -225,27 +309,30 @@ class QuarantineLogger:
     # -------------------------------------------------------------------
 
     def _read_all(self) -> List[Dict[str, Any]]:
-        """Read all records from the quarantine file."""
+        """Read all records from the quarantine file (shared-locked)."""
         if not self._path.exists():
             return []
 
         records = []
         try:
             with open(self._path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        records.append(json.loads(line))
+                with _file_lock(f, exclusive=False):
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            records.append(json.loads(line))
         except (OSError, json.JSONDecodeError) as e:
             logger.error("Failed to read quarantine file: %s", e)
 
         return records
 
     def _write_all(self, records: List[Dict[str, Any]]) -> None:
-        """Rewrite all records (used after mark_reviewed)."""
+        """Rewrite all records (exclusive-locked, used after mark_reviewed)."""
         try:
             with open(self._path, "w") as f:
-                for r in records:
-                    f.write(json.dumps(r, default=str) + "\n")
+                with _file_lock(f, exclusive=True):
+                    for r in records:
+                        f.write(json.dumps(r, default=str) + "\n")
+                    f.flush()
         except OSError as e:
             logger.error("Failed to write quarantine file: %s", e)

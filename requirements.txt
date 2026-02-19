@@ -8,6 +8,7 @@
 # --- Core: Always Required ---
 numpy                   # NG-Lite + vector operations
 pyyaml                  # config.yaml parsing
+pydantic>=2.0           # Config validation (also required by FastAPI)
 rich                    # CLI formatted output
 
 # --- Sentinel Core (Layer 2 + Layer 4) ---

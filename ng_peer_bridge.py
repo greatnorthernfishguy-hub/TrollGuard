@@ -26,6 +26,14 @@ Canonical source: https://github.com/greatnorthernfishguy-hub/TrollGuard
 (First implementation; will be upstreamed to NeuroGraph once stabilized)
 
 # ---- Changelog ----
+# [2026-02-19] Claude (Opus 4.6) — Grok security audit: fcntl file locking.
+#   What: Added fcntl.LOCK_EX on event file appends and LOCK_SH on peer
+#         reads during sync, plus LOCK_EX on peer registry writes.
+#   Why:  Grok flagged that concurrent modules (trollguard + TID +
+#         cricket) writing to their own JSONL and reading each other's
+#         files can hit partial-line reads.  Advisory locks coordinate.
+#   How:  fcntl.flock() with graceful no-op on non-POSIX platforms.
+#
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   What: NGPeerBridge implementing the NGBridge ABC from ng_lite.py.
 #         Provides Tier 2 peer-to-peer learning between co-located
@@ -59,6 +67,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 from ng_lite import NGBridge
 
@@ -182,7 +196,12 @@ class NGPeerBridge(NGBridge):
 
         try:
             with open(self._event_file, "a") as f:
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(json.dumps(event, default=str) + "\n")
+                f.flush()
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except OSError as e:
             logger.warning("Failed to write peer event: %s", e)
             return None
@@ -353,6 +372,8 @@ class NGPeerBridge(NGBridge):
 
             try:
                 with open(event_file, "r") as f:
+                    if _HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                     f.seek(last_pos)
                     for line in f:
                         line = line.strip()
@@ -363,6 +384,8 @@ class NGPeerBridge(NGBridge):
                             except json.JSONDecodeError:
                                 pass
                     self._peer_read_positions[peer_module] = f.tell()
+                    if _HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             except OSError as e:
                 logger.warning("Failed to read peer file %s: %s", event_file, e)
 
@@ -383,24 +406,40 @@ class NGPeerBridge(NGBridge):
     # -------------------------------------------------------------------
 
     def _register_module(self) -> None:
-        """Register this module in the peer registry."""
+        """Register this module in the peer registry (exclusive-locked)."""
         registry_path = self._shared_dir / "_peer_registry.json"
 
         try:
+            # Open in r+ or create if missing, all under exclusive lock
             if registry_path.exists():
-                with open(registry_path, "r") as f:
+                with open(registry_path, "r+") as f:
+                    if _HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                     registry = json.load(f)
+                    registry["modules"][self.module_id] = {
+                        "registered_at": time.time(),
+                        "event_file": str(self._event_file),
+                        "pid": os.getpid(),
+                    }
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(registry, f, indent=2)
+                    f.flush()
+                    if _HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             else:
-                registry = {"modules": {}}
-
-            registry["modules"][self.module_id] = {
-                "registered_at": time.time(),
-                "event_file": str(self._event_file),
-                "pid": os.getpid(),
-            }
-
-            with open(registry_path, "w") as f:
-                json.dump(registry, f, indent=2)
+                registry = {"modules": {self.module_id: {
+                    "registered_at": time.time(),
+                    "event_file": str(self._event_file),
+                    "pid": os.getpid(),
+                }}}
+                with open(registry_path, "w") as f:
+                    if _HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    json.dump(registry, f, indent=2)
+                    f.flush()
+                    if _HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         except (OSError, json.JSONDecodeError) as e:
             logger.warning("Failed to update peer registry: %s", e)

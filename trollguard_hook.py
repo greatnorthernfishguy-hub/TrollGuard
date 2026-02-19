@@ -21,6 +21,17 @@ operating silently in the background.
 PRD reference: Section 7.3 — Integration with OpenClaw
 
 # ---- Changelog ----
+# [2026-02-19] Claude (Opus 4.6) — Grok security audit: thread safety + file locking.
+#   What: Added threading.RLock for sentry/model access, fcntl on event
+#         JSONL writes, and explicit error logging on init failures.
+#   Why:  Grok identified two distinct concurrency gaps:
+#         (a) The singleton's sanitize() temporarily mutates _sentry.config["mode"]
+#             then restores it — classic TOCTOU race under multi-threaded access.
+#         (b) _write_event appends to events.jsonl without file locking.
+#   How:  RLock wraps all sentry access (scan, config mutation, stats).
+#         fcntl.LOCK_EX wraps event file appends.  Init failures now
+#         log at ERROR instead of silent pass-through.
+#
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   What: TrollGuardFilter singleton with sanitize(), scan_file(),
 #         scan_url(), and scan_repo() methods.  Writes structured
@@ -71,9 +82,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 logger = logging.getLogger("trollguard.hook")
 
@@ -105,6 +123,10 @@ class TrollGuardFilter:
 
         # Load config
         self._config = self._load_config(config_path)
+
+        # Thread safety: protects sentry config mutation in sanitize()
+        # and all component access from concurrent callers.
+        self._lock = threading.RLock()
 
         # Initialize components
         self._ng_lite = None
@@ -183,19 +205,22 @@ class TrollGuardFilter:
             logger.warning("Sentry not initialized, passing text through unsanitized")
             return text
 
-        # Apply per-call overrides
-        original_mode = None
-        if mode:
-            original_mode = self._sentry.config["mode"]
-            self._sentry.config["mode"] = mode
+        # RLock protects the sentry config mutation (mode swap) and the
+        # scan call itself from concurrent threads.  Without this, two
+        # threads calling sanitize() with different mode overrides could
+        # observe each other's temporary config changes.
+        with self._lock:
+            original_mode = None
+            if mode:
+                original_mode = self._sentry.config["mode"]
+                self._sentry.config["mode"] = mode
 
-        result = self._sentry.scan(text, source=source)
+            result = self._sentry.scan(text, source=source)
 
-        # Restore
-        if original_mode is not None:
-            self._sentry.config["mode"] = original_mode
+            if original_mode is not None:
+                self._sentry.config["mode"] = original_mode
 
-        # Track
+        # Track (counters are benign races — not critical)
         if result.verdict.value == "MALICIOUS":
             self._total_blocks += 1
         elif result.verdict.value == "SUSPICIOUS":
@@ -238,8 +263,9 @@ class TrollGuardFilter:
         Returns:
             Dict with verdict, layer results, and timing.
         """
-        if self._pipeline is None:
-            self._init_pipeline()
+        with self._lock:
+            if self._pipeline is None:
+                self._init_pipeline()
 
         if self._pipeline is None:
             return {"verdict": "ERROR", "reason": "Pipeline not available"}
@@ -464,6 +490,11 @@ class TrollGuardFilter:
         try:
             events_path = self._security_dir / "events.jsonl"
             with open(events_path, "a") as f:
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(json.dumps(event, default=str) + "\n")
+                f.flush()
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except Exception as e:
             logger.warning("Failed to write security event: %s", e)

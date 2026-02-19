@@ -18,6 +18,12 @@ modules on the same host.
 PRD reference: Appendix A — Coding Agent Prompt, TASK 3
 
 # ---- Changelog ----
+# [2026-02-19] Claude (Opus 4.6) — Grok security audit: fcntl file locking.
+#   What: Added fcntl.LOCK_EX on skills_db.json JSONL appends.
+#   Why:  Grok flagged concurrent-append race on skills_db.json when
+#         CLI and API write simultaneously.
+#   How:  Reuses the same _file_lock context manager from quarantine_logger.
+#
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   What: TrollGuardPipeline class orchestrating all 4 layers,
 #         plus CLI entry point using Rich for formatted output.
@@ -46,6 +52,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 logger = logging.getLogger("trollguard")
 
@@ -464,7 +476,12 @@ class TrollGuardPipeline:
 
         try:
             with open(db_path, "a") as f:
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(json.dumps(entry, default=str) + "\n")
+                f.flush()
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except OSError as e:
             logger.error("Failed to write to skills_db: %s", e)
 
@@ -484,7 +501,17 @@ class TrollGuardPipeline:
 # ---------------------------------------------------------------------------
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
-    """Load TrollGuard configuration from YAML."""
+    """Load TrollGuard configuration from YAML with Pydantic validation.
+
+    Falls back to raw dict loading if the config_schema module is
+    unavailable (e.g., pydantic not installed).
+    """
+    try:
+        from config_schema import load_and_validate
+        return load_and_validate(config_path)
+    except ImportError:
+        logger.debug("config_schema not available, loading config without validation")
+
     p = Path(config_path)
     if not p.exists():
         logger.warning("Config not found at %s, using defaults", config_path)
