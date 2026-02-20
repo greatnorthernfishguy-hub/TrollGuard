@@ -2,7 +2,7 @@
 
 **Status:** Normative — all modules MUST comply.
 **Maintained by:** TrollGuard repository (canonical source of truth).
-**Last updated:** 2026-02-19
+**Last updated:** 2026-02-20
 
 ---
 
@@ -203,7 +203,10 @@ All modules MUST use this same root. No exceptions.
 ```
 
 **Who writes this:** Each module's `install.sh` writes its own entry.
-`ETModuleManager.discover()` also updates it when scanning known locations.
+This is the **sole source of truth** for module discovery.
+`ETModuleManager.discover()` reads ONLY from this registry — it does NOT
+scan the filesystem.  If a module is not registered here, it does not
+exist to the ecosystem.
 
 **Concurrency:** Multiple installers may run simultaneously. Use
 read-modify-write with file locking (fcntl on POSIX). See Section 4.5.
@@ -425,14 +428,27 @@ Replace `YOUR_MODULE_ID`, `Your Module Name`, etc. with actual values.
 
 ### 5.3 Peer Module Detection (recommended)
 
-During install, detect sibling modules to inform the user:
+During install, detect sibling modules by reading the registry — NOT by
+guessing filesystem paths.  Hardcoded path lists cause ghost filesystems
+when deploy scripts copy files to multiple locations.
 
 ```bash
-# Check for peer modules
-[ -d "$HOME/NeuroGraph" ]               && echo "[INFO] NeuroGraph detected"
-[ -d "$HOME/The-Inference-Difference" ] && echo "[INFO] The-Inference-Difference detected"
-[ -d "$HOME/TrollGuard" ]              && echo "[INFO] TrollGuard detected"
+# Check for peer modules via registry (the ONLY source of truth)
+ET_MODULES_DIR="${ET_MODULES_DIR:-$HOME/.et_modules}"
+if [ -f "$ET_MODULES_DIR/registry.json" ]; then
+    python3 -c "
+import json
+with open('$ET_MODULES_DIR/registry.json') as f:
+    reg = json.load(f)
+for mid, m in reg.get('modules', {}).items():
+    print(f'[INFO] Peer module detected: {m.get(\"display_name\", mid)} at {m.get(\"install_path\", \"unknown\")}')
+" 2>/dev/null || true
+fi
 ```
+
+**DO NOT** hardcode filesystem paths to detect peers. The registry is the
+sole discovery mechanism.  If a module is not in the registry, it hasn't
+been installed yet — do not go looking for it.
 
 ### 5.4 install_path Stamping
 
@@ -658,9 +674,11 @@ modules. To ensure modules are ready when it does, comply with the following.
 ### 10.1 Discovery Contract
 
 The GUI updater will find modules by:
-1. Reading `~/.et_modules/registry.json`
-2. Scanning `KNOWN_LOCATIONS` (Section 11.2) for `et_module.json` files
-3. Checking each module's `/health` endpoint (if `api_port > 0`)
+1. Reading `~/.et_modules/registry.json` (the **sole** discovery mechanism)
+2. Checking each module's `/health` endpoint (if `api_port > 0`)
+
+There is NO filesystem scanning.  The registry is the only source of truth.
+Modules that are not registered do not exist to the ecosystem.
 
 **Your module is discoverable if:** it has a valid `et_module.json` AND
 is registered in `registry.json` AND `install_path` points to an existing
@@ -712,26 +730,40 @@ Even before the GUI updater exists, implement these so it works on day one:
 | `cricket` | Cricket | TBD | 7441 | Planned |
 | `faux_clawdbot` | Faux_Clawdbot | TBD | 7442 | Planned |
 
-### 11.2 Known Install Locations
+### 11.2 Discovery: Registry Only — No Filesystem Scanning
 
-The ET Module Manager scans these paths. If your module installs to a
-non-standard location, it MUST register via `registry.json` to be found.
+**There is no `KNOWN_LOCATIONS` list.  There is no filesystem scanning.**
 
-```python
-KNOWN_LOCATIONS = [
-    "~/NeuroGraph",
-    "~/.openclaw/skills/neurograph",
-    "~/The-Inference-Difference",
-    "/opt/inference-difference",
-    "~/TrollGuard",
-    "/opt/trollguard",
-    "~/.et_modules/modules",
-]
-```
+Previous versions of the ET Module Manager maintained a `KNOWN_LOCATIONS`
+list that scanned 7+ hardcoded paths for `et_module.json` files.  This
+was deleted on 2026-02-20 because it was the root cause of **ghost
+filesystem creation**: when deploy scripts copied module files to multiple
+locations (e.g., `~/NeuroGraph/`, `~/.openclaw/skills/neurograph/`,
+`~/.neurograph/repo/`), the scanner treated every copy as a distinct
+install, creating duplicate registrations that broke updates and confused
+users.
 
-To add a new module's install location: add it to `KNOWN_LOCATIONS` in
-`et_modules/manager.py` in the TrollGuard repo AND in your own vendored
-copy. Submit a PR to TrollGuard so the canonical copy stays in sync.
+**The fix:** `~/.et_modules/registry.json` is now the **sole source of
+truth**.  `ETModuleManager.discover()` reads ONLY from the registry.
+Modules exist to the ecosystem ONLY when their `install.sh` writes an
+entry.  No scanning, no guessing, no "let me check 7 places."
+
+**Canonical install paths** (for reference — these are NOT scanned):
+
+| Module | Canonical Path |
+|--------|---------------|
+| NeuroGraph | `~/NeuroGraph/` |
+| The-Inference-Difference | `~/The-Inference-Difference/` |
+| TrollGuard | `~/TrollGuard/` |
+| Future modules | `~/ModuleName/` (user's choice, recorded in registry) |
+
+**To add a new module:** Run `install.sh`.  It registers the module in
+`registry.json` with whatever `install_path` was used.  Done.  No need
+to update any hardcoded list anywhere.
+
+**Stale entry pruning:** If a registered module's `install_path` no
+longer exists on disk (e.g., user deleted it), `discover()` automatically
+prunes that entry from the registry and logs a warning.
 
 ---
 

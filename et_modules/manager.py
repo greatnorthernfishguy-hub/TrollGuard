@@ -5,6 +5,25 @@ Discovers, registers, updates, and coordinates E-T Systems modules
 as a unified ecosystem.
 
 # ---- Changelog ----
+# [2026-02-20] Claude (Opus 4.6) — Registry-only discovery, no more guesswork.
+#   What: Deleted KNOWN_LOCATIONS list and all filesystem-scanning logic.
+#         discover() now reads ONLY from ~/.et_modules/registry.json.
+#   Why:  The KNOWN_LOCATIONS scanner was the root cause of ghost file
+#         systems.  It scanned 7 hardcoded paths (~/NeuroGraph,
+#         ~/.openclaw/skills/neurograph, /opt/trollguard, etc.) and
+#         treated any directory with et_module.json as a real install.
+#         When deploy scripts copied files to multiple locations,
+#         the scanner "discovered" every copy as a distinct install,
+#         creating duplicate registrations.  On Josh's system:
+#           /home/josh/NeuroGraph/                  ← the real one
+#           /home/josh/.openclaw/skills/neurograph/  ← ghost
+#           /home/josh/.neurograph/repo/             ← ghost
+#         The scanner couldn't distinguish real from ghost.
+#   How:  registry.json is now the SOLE source of truth.  Modules
+#         exist to the ecosystem ONLY when their installer writes an
+#         entry.  No scanning, no guessing, no "let me check 7 places."
+#         New modules are auto-detected the moment install.sh runs.
+#
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   What: ETModuleManager class with discover(), status(), update_all(),
 #         and shared learning directory management.
@@ -125,24 +144,10 @@ class ETModuleManager:
         manager.register(manifest)
     """
 
-    # Known install locations to scan for modules.
-    # Primary paths match the home-directory layout used by the
-    # E-T Systems ecosystem.  Legacy /opt/ paths are kept as
-    # fallbacks for system-level deployments.
-    #
-    # [2026-02-19] Claude (Opus 4.6) — Updated to match actual
-    #   install locations: ~/NeuroGraph, ~/TrollGuard, etc.
-    #   Previous paths assumed /opt/ and ~/.openclaw/ which didn't
-    #   match the user's real directory structure.
-    KNOWN_LOCATIONS = [
-        "~/NeuroGraph",                       # NeuroGraph (primary)
-        "~/.openclaw/skills/neurograph",      # NeuroGraph (legacy)
-        "~/The-Inference-Difference",         # The-Inference-Difference (primary)
-        "/opt/inference-difference",           # The-Inference-Difference (legacy)
-        "~/TrollGuard",                       # TrollGuard (primary)
-        "/opt/trollguard",                     # TrollGuard (legacy)
-        "~/.et_modules/modules",              # Generic module install dir
-    ]
+    # NO KNOWN_LOCATIONS.  Discovery is registry-only.
+    # See changelog [2026-02-20] for why the scan list was deleted.
+    # Modules register themselves via install.sh → registry.json.
+    # If it's not in the registry, it doesn't exist to the ecosystem.
 
     def __init__(self, root_dir: Optional[str] = None):
         """
@@ -169,42 +174,39 @@ class ETModuleManager:
     # -------------------------------------------------------------------
 
     def discover(self) -> Dict[str, ModuleManifest]:
-        """Discover all installed E-T Systems modules.
+        """Return all registered E-T Systems modules.
 
-        Scans known install locations and the registry for modules
-        with et_module.json manifests.
+        Reads ONLY from ~/.et_modules/registry.json.  Does NOT scan
+        the filesystem.  Modules appear here when their install.sh
+        registers them — not before, not by guessing.
+
+        Validates that each registered module's install_path still
+        exists.  Stale entries (deleted modules) are pruned.
 
         Returns:
-            Dict of module_id -> ModuleManifest for all found modules.
+            Dict of module_id -> ModuleManifest for all registered modules.
         """
-        discovered: Dict[str, ModuleManifest] = {}
+        self._load_registry()
 
-        # Scan known locations
-        for loc in self.KNOWN_LOCATIONS:
-            expanded = Path(loc).expanduser()
-            manifest_path = expanded / "et_module.json"
-            if manifest_path.exists():
-                manifest = ModuleManifest.from_file(str(manifest_path))
-                if manifest and manifest.module_id:
-                    manifest.install_path = str(expanded)
-                    discovered[manifest.module_id] = manifest
-
-        # Merge with existing registry (registry may know about modules
-        # in non-standard locations)
+        # Prune stale entries (install dir deleted but registry not updated)
+        live: Dict[str, ModuleManifest] = {}
+        pruned: List[str] = []
         for mid, manifest in self._registry.items():
-            if mid not in discovered:
-                # Check if the registered location still exists
-                if Path(manifest.install_path).exists():
-                    discovered[mid] = manifest
+            if manifest.install_path and Path(manifest.install_path).exists():
+                live[mid] = manifest
+            else:
+                pruned.append(mid)
 
-        # Update registry with discoveries
-        self._registry = discovered
-        self._save_registry()
+        if pruned:
+            logger.warning(
+                "Pruned %d stale registry entries (install path gone): %s",
+                len(pruned), pruned,
+            )
+            self._registry = live
+            self._save_registry()
 
-        logger.info("Discovered %d modules: %s",
-                     len(discovered), list(discovered.keys()))
-
-        return discovered
+        logger.info("Registered modules: %s", list(live.keys()))
+        return dict(live)
 
     def status(self) -> Dict[str, ModuleStatus]:
         """Check status of all discovered modules.
