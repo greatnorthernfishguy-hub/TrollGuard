@@ -348,21 +348,24 @@ async def health():
 
 @app.get("/stats")
 async def stats():
-    """Detailed telemetry: NG-Lite state, sentry counters, quarantine stats."""
+    """Detailed telemetry: ecosystem tier, NG-Lite state, sentry counters, quarantine stats."""
     pipeline = _get_pipeline()
 
     result: Dict[str, Any] = {
         "uptime_seconds": round(time.time() - _startup_time, 1),
     }
 
+    # Prefer unified ecosystem stats when available
+    if pipeline._eco is not None:
+        result["ecosystem"] = pipeline._eco.stats()
+    else:
+        if pipeline._ng_lite is not None:
+            result["ng_lite"] = pipeline._ng_lite.get_stats()
+        if pipeline._peer_bridge is not None:
+            result["peer_bridge"] = pipeline._peer_bridge.get_stats()
+
     if _sentry is not None:
         result["sentry"] = _sentry.get_stats()
-
-    if pipeline._ng_lite is not None:
-        result["ng_lite"] = pipeline._ng_lite.get_stats()
-
-    if pipeline._peer_bridge is not None:
-        result["peer_bridge"] = pipeline._peer_bridge.get_stats()
 
     if _quarantine is not None:
         result["quarantine"] = _quarantine.get_stats()
