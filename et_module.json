@@ -1,14 +1,26 @@
 {
+  "_schema": "et_module/2.0",
   "module_id": "trollguard",
   "display_name": "TrollGuard",
   "version": "0.1.0",
   "description": "The Open-Source Immune System for AI Agents — 4-layer security pipeline with semantic air gap",
-  "install_path": "",
   "git_remote": "https://github.com/greatnorthernfishguy-hub/TrollGuard.git",
   "git_branch": "main",
   "entry_point": "main.py",
-  "ng_lite_version": "1.0.0",
-  "dependencies": [],
+  "install_path": "",
   "service_name": "trollguard",
-  "api_port": 7438
+  "api_port": 7438,
+  "ecosystem": {
+    "ng_lite": true,
+    "ng_lite_version": "1.0.0",
+    "peer_bridge": true,
+    "tier3_upgrade": true,
+    "ng_ecosystem_version": "1.0.0",
+    "openclaw_adapter": "trollguard_hook.py",
+    "openclaw_skill_name": "TrollGuard Security",
+    "shared_learning_writes": true,
+    "capabilities": ["security", "scanning", "threat-detection", "runtime-protection"]
+  },
+  "dependencies": [],
+  "provides": ["security"]
 }

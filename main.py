@@ -148,42 +148,38 @@ class TrollGuardPipeline:
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
+        self._eco = None
         self._ng_lite = None
         self._peer_bridge = None
-        self._init_ng_lite()
+        self._init_ecosystem()
 
-    def _init_ng_lite(self) -> None:
-        """Initialize NG-Lite with optional peer bridge."""
+    def _init_ecosystem(self) -> None:
+        """Initialize NGEcosystem (Tier 1→2→3 automatic progression)."""
         ng_config = self.config.get("ng_lite", {})
         if not ng_config.get("enabled", True):
             return
 
         try:
-            from ng_lite import NGLite
-            self._ng_lite = NGLite(
-                module_id=ng_config.get("module_id", "trollguard"),
-            )
-
-            # Load persisted state if available
-            state_path = ng_config.get("state_path", "ng_lite_state.json")
-            if Path(state_path).exists():
-                self._ng_lite.load(state_path)
-                logger.info("Loaded NG-Lite state from %s", state_path)
-
-            # Connect peer bridge for cross-module learning
+            import ng_ecosystem
+            eco_config = {}
             peer_config = ng_config.get("peer_bridge", {})
-            if peer_config.get("enabled", True):
-                from ng_peer_bridge import NGPeerBridge
-                self._peer_bridge = NGPeerBridge(
-                    module_id=ng_config.get("module_id", "trollguard"),
-                    shared_dir=peer_config.get("shared_dir"),
-                    sync_interval=peer_config.get("sync_interval", 100),
-                )
-                self._ng_lite.connect_bridge(self._peer_bridge)
-                logger.info("NG-Lite peer bridge connected")
-
-        except ImportError as e:
-            logger.warning("NG-Lite not available: %s", e)
+            if peer_config:
+                eco_config["peer_bridge"] = {
+                    "enabled": peer_config.get("enabled", True),
+                    "sync_interval": peer_config.get("sync_interval", 100),
+                }
+            state_path = ng_config.get("state_path", "ng_lite_state.json")
+            self._eco = ng_ecosystem.init(
+                module_id=ng_config.get("module_id", "trollguard"),
+                state_path=state_path,
+                config=eco_config,
+            )
+            # Expose internals for backward compat with api.py/stats
+            self._ng_lite = self._eco._ng
+            self._peer_bridge = self._eco._peer_bridge
+            logger.info("NGEcosystem initialized at %s", self._eco.tier_name)
+        except Exception as e:
+            logger.warning("NGEcosystem not available: %s", e)
 
     def scan_file(self, file_path: str) -> PipelineReport:
         """Run the full pipeline on a file.
@@ -486,14 +482,14 @@ class TrollGuardPipeline:
             logger.error("Failed to write to skills_db: %s", e)
 
     def save_ng_state(self) -> None:
-        """Persist NG-Lite learning state."""
-        if self._ng_lite is None:
-            return
-
-        state_path = self.config.get("ng_lite", {}).get(
-            "state_path", "ng_lite_state.json"
-        )
-        self._ng_lite.save(state_path)
+        """Persist NG-Lite learning state via NGEcosystem."""
+        if self._eco is not None:
+            self._eco.save()
+        elif self._ng_lite is not None:
+            state_path = self.config.get("ng_lite", {}).get(
+                "state_path", "ng_lite_state.json"
+            )
+            self._ng_lite.save(state_path)
 
 
 # ---------------------------------------------------------------------------
@@ -660,15 +656,30 @@ def _print_status(pipeline: TrollGuardPipeline, config: Dict[str, Any]) -> None:
     """Print system status."""
     print("=== TrollGuard Status ===")
     print(f"Config loaded: {bool(config)}")
-    print(f"NG-Lite: {'connected' if pipeline._ng_lite else 'not loaded'}")
-    print(f"Peer Bridge: {'connected' if pipeline._peer_bridge else 'not loaded'}")
 
-    if pipeline._ng_lite:
-        stats = pipeline._ng_lite.get_stats()
-        print(f"  Nodes: {stats['node_count']}/{stats['max_nodes']}")
-        print(f"  Synapses: {stats['synapse_count']}/{stats['max_synapses']}")
-        print(f"  Outcomes: {stats['total_outcomes']}")
-        print(f"  Success rate: {stats['success_rate']:.2%}")
+    if pipeline._eco is not None:
+        print(f"Ecosystem: {pipeline._eco.tier_name}")
+        eco_stats = pipeline._eco.stats()
+        ng_lite = eco_stats.get("ng_lite", {})
+        if ng_lite:
+            print(f"  Nodes: {ng_lite.get('node_count', '?')}/{ng_lite.get('max_nodes', '?')}")
+            print(f"  Synapses: {ng_lite.get('synapse_count', '?')}/{ng_lite.get('max_synapses', '?')}")
+            print(f"  Outcomes: {ng_lite.get('total_outcomes', '?')}")
+            sr = ng_lite.get('success_rate', 0)
+            print(f"  Success rate: {sr:.2%}")
+        if eco_stats.get("peer_bridge"):
+            print(f"  Peer Bridge: connected")
+        if eco_stats.get("ng_memory"):
+            print(f"  NeuroGraph: connected (Tier 3)")
+    else:
+        print(f"NG-Lite: {'connected' if pipeline._ng_lite else 'not loaded'}")
+        print(f"Peer Bridge: {'connected' if pipeline._peer_bridge else 'not loaded'}")
+        if pipeline._ng_lite:
+            stats = pipeline._ng_lite.get_stats()
+            print(f"  Nodes: {stats['node_count']}/{stats['max_nodes']}")
+            print(f"  Synapses: {stats['synapse_count']}/{stats['max_synapses']}")
+            print(f"  Outcomes: {stats['total_outcomes']}")
+            print(f"  Success rate: {stats['success_rate']:.2%}")
 
     # ET Module Manager status
     try:
