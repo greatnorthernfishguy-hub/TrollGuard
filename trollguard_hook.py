@@ -101,6 +101,7 @@ class TrollGuardHook(OpenClawAdapter):
 
     def _module_on_message(self, text: str, embedding: np.ndarray) -> Dict[str, Any]:
         """Run TrollGuard's security scan on the incoming message."""
+        logger.info("TrollGuard hook invoked with text: %.50s...", text)
         self._scan_count += 1
         result: Dict[str, Any] = {"scan_count": self._scan_count}
 
