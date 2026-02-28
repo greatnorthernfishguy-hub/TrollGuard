@@ -87,26 +87,34 @@ detect_environment() {
         info "No NVIDIA GPU detected (CPU-only mode)"
     fi
 
-    # Check for existing NeuroGraph (home-dir primary, legacy fallback)
-    if [ -d "$HOME/NeuroGraph" ]; then
-        info "NeuroGraph detected at ~/NeuroGraph"
-        HAS_NEUROGRAPH=true
-    elif [ -d "$HOME/.openclaw/skills/neurograph" ]; then
-        info "NeuroGraph detected at ~/.openclaw/skills/neurograph"
-        HAS_NEUROGRAPH=true
-    else
-        HAS_NEUROGRAPH=false
-    fi
-
-    # Check for The-Inference-Difference (home-dir primary, legacy fallback)
-    if [ -d "$HOME/The-Inference-Difference" ]; then
-        info "The-Inference-Difference detected at ~/The-Inference-Difference"
-        HAS_TID=true
-    elif [ -d "/opt/inference-difference" ]; then
-        info "The-Inference-Difference detected at /opt/inference-difference"
-        HAS_TID=true
-    else
-        HAS_TID=false
+    # Check for peer modules via registry (sole source of truth — no hardcoded paths)
+    HAS_NEUROGRAPH=false
+    HAS_TID=false
+    if [ -f "$ET_MODULES_DIR/registry.json" ]; then
+        PEER_INFO=$($PYTHON -c "
+import json
+with open('$ET_MODULES_DIR/registry.json') as f:
+    reg = json.load(f)
+mods = reg.get('modules', {})
+if 'neurograph' in mods:
+    print('neurograph:' + mods['neurograph'].get('install_path', ''))
+if 'inference_difference' in mods:
+    print('inference_difference:' + mods['inference_difference'].get('install_path', ''))
+" 2>/dev/null || true)
+        if echo "$PEER_INFO" | grep -q "^neurograph:"; then
+            NG_PATH=$(echo "$PEER_INFO" | grep "^neurograph:" | cut -d: -f2)
+            if [ -n "$NG_PATH" ] && [ -d "$NG_PATH" ]; then
+                info "NeuroGraph detected at $NG_PATH (via registry)"
+                HAS_NEUROGRAPH=true
+            fi
+        fi
+        if echo "$PEER_INFO" | grep -q "^inference_difference:"; then
+            TID_PATH=$(echo "$PEER_INFO" | grep "^inference_difference:" | cut -d: -f2)
+            if [ -n "$TID_PATH" ] && [ -d "$TID_PATH" ]; then
+                info "The-Inference-Difference detected at $TID_PATH (via registry)"
+                HAS_TID=true
+            fi
+        fi
     fi
 }
 
@@ -143,34 +151,41 @@ install_deps() {
 deploy_files() {
     info "Deploying TrollGuard to $INSTALL_DIR..."
 
-    # Create install directory (use sudo only if outside $HOME)
-    if [[ "$INSTALL_DIR" == "$HOME"* ]]; then
-        mkdir -p "$INSTALL_DIR"
-    else
-        sudo mkdir -p "$INSTALL_DIR"
-        sudo chown "$(whoami):$(whoami)" "$INSTALL_DIR"
-    fi
-
-    # Copy project files
+    # Resolve where install.sh lives (the git clone)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    cp "$SCRIPT_DIR/main.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/api.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/trollguard_hook.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/config.yaml" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/ng_lite.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/ng_peer_bridge.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/cisco_wrapper_mock.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/et_module.json" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
+    # If the clone IS the install dir, skip file copies — they're already there.
+    # Just ensure data directories and manifest are set up.
+    if [ "$(realpath "$SCRIPT_DIR")" = "$(realpath "$INSTALL_DIR")" ]; then
+        info "Clone directory is the install directory — skipping file copy."
+    else
+        # Create install directory (use sudo only if outside $HOME)
+        if [[ "$INSTALL_DIR" == "$HOME"* ]]; then
+            mkdir -p "$INSTALL_DIR"
+        else
+            sudo mkdir -p "$INSTALL_DIR"
+            sudo chown "$(whoami):$(whoami)" "$INSTALL_DIR"
+        fi
 
-    # Copy sentinel_core package
-    mkdir -p "$INSTALL_DIR/sentinel_core"
-    cp "$SCRIPT_DIR/sentinel_core/"*.py "$INSTALL_DIR/sentinel_core/"
+        # Copy project files
+        cp "$SCRIPT_DIR/main.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/api.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/trollguard_hook.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/config.yaml" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/ng_lite.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/ng_peer_bridge.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/cisco_wrapper_mock.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/et_module.json" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
 
-    # Copy et_modules package
-    mkdir -p "$INSTALL_DIR/et_modules"
-    cp "$SCRIPT_DIR/et_modules/"*.py "$INSTALL_DIR/et_modules/"
+        # Copy sentinel_core package
+        mkdir -p "$INSTALL_DIR/sentinel_core"
+        cp "$SCRIPT_DIR/sentinel_core/"*.py "$INSTALL_DIR/sentinel_core/"
+
+        # Copy et_modules package
+        mkdir -p "$INSTALL_DIR/et_modules"
+        cp "$SCRIPT_DIR/et_modules/"*.py "$INSTALL_DIR/et_modules/"
+    fi
 
     # Create data directories
     mkdir -p "$INSTALL_DIR/models"

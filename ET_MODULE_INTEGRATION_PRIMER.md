@@ -78,7 +78,7 @@ modules as a unified ecosystem.  One command updates everything.
 - Each module has an `et_module.json` manifest declaring its identity, version,
   install path, git remote, and dependencies
 - The manager maintains a registry at `~/.et_modules/registry.json`
-- `ETModuleManager.discover()` scans known locations + the registry
+- `ETModuleManager.discover()` reads ONLY from `registry.json` — no filesystem scanning
 - `ETModuleManager.update_all()` git-pulls and restarts all registered modules
 - `ETModuleManager.status()` reports health of all modules
 
@@ -146,24 +146,21 @@ Wherever your module currently creates an `NGLite` instance, add the peer
 bridge connection.  For The-Inference-Difference, this would be in the app
 startup.  For NeuroGraph, this would be in `openclaw_hook.py`.
 
-### 3. Known Install Locations
+### 3. Discovery: Registry Only — No Filesystem Scanning
 
-The ET Module Manager scans these locations by default:
+**There is no `KNOWN_LOCATIONS` list.  There is no filesystem scanning.**
 
-```python
-KNOWN_LOCATIONS = [
-    "~/NeuroGraph",                       # NeuroGraph (primary)
-    "~/.openclaw/skills/neurograph",      # NeuroGraph (legacy)
-    "~/The-Inference-Difference",         # The-Inference-Difference (primary)
-    "/opt/inference-difference",           # The-Inference-Difference (legacy)
-    "~/TrollGuard",                       # TrollGuard (primary)
-    "/opt/trollguard",                     # TrollGuard (legacy)
-    "~/.et_modules/modules",              # Generic module install dir
-]
-```
+The ET Module Manager discovers modules ONLY by reading
+`~/.et_modules/registry.json`.  When your module's `install.sh` runs
+and registers the module (step B above), it becomes visible to the
+ecosystem.  That is the only way modules are discovered.
 
-If your module installs somewhere else, make sure you register via the
-registry mechanism (step B above) so the manager can find it.
+The previous `KNOWN_LOCATIONS` scanner was deleted because it created
+ghost filesystems: deploy scripts would copy files to multiple locations,
+and the scanner would treat every copy as a separate install, creating
+duplicate entries that broke updates.
+
+If a module is not in `registry.json`, it does not exist to the ecosystem.
 
 ### 4. Shared Learning Directory Structure
 
@@ -240,9 +237,10 @@ You need to:
    agreed-upon root.  All modules write there.  The ET Module Manager lives
    there.  The peer bridge events live there.
 
-5. **Manifests are the discovery mechanism.**  `et_module.json` is the
-   contract.  If a module has one, the manager can find it, update it,
-   and coordinate it.
+5. **Registry is the discovery mechanism.**  `~/.et_modules/registry.json`
+   is the sole source of truth.  Modules exist to the ecosystem ONLY when
+   their installer writes a registry entry.  No filesystem scanning, no
+   guessing, no hardcoded path lists.
 
 ## Reference Implementation
 
