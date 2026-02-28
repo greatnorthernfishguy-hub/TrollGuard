@@ -151,34 +151,41 @@ install_deps() {
 deploy_files() {
     info "Deploying TrollGuard to $INSTALL_DIR..."
 
-    # Create install directory (use sudo only if outside $HOME)
-    if [[ "$INSTALL_DIR" == "$HOME"* ]]; then
-        mkdir -p "$INSTALL_DIR"
-    else
-        sudo mkdir -p "$INSTALL_DIR"
-        sudo chown "$(whoami):$(whoami)" "$INSTALL_DIR"
-    fi
-
-    # Copy project files
+    # Resolve where install.sh lives (the git clone)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    cp "$SCRIPT_DIR/main.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/api.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/trollguard_hook.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/config.yaml" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/ng_lite.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/ng_peer_bridge.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/cisco_wrapper_mock.py" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/et_module.json" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
+    # If the clone IS the install dir, skip file copies — they're already there.
+    # Just ensure data directories and manifest are set up.
+    if [ "$(realpath "$SCRIPT_DIR")" = "$(realpath "$INSTALL_DIR")" ]; then
+        info "Clone directory is the install directory — skipping file copy."
+    else
+        # Create install directory (use sudo only if outside $HOME)
+        if [[ "$INSTALL_DIR" == "$HOME"* ]]; then
+            mkdir -p "$INSTALL_DIR"
+        else
+            sudo mkdir -p "$INSTALL_DIR"
+            sudo chown "$(whoami):$(whoami)" "$INSTALL_DIR"
+        fi
 
-    # Copy sentinel_core package
-    mkdir -p "$INSTALL_DIR/sentinel_core"
-    cp "$SCRIPT_DIR/sentinel_core/"*.py "$INSTALL_DIR/sentinel_core/"
+        # Copy project files
+        cp "$SCRIPT_DIR/main.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/api.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/trollguard_hook.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/config.yaml" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/ng_lite.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/ng_peer_bridge.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/cisco_wrapper_mock.py" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/et_module.json" "$INSTALL_DIR/"
+        cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
 
-    # Copy et_modules package
-    mkdir -p "$INSTALL_DIR/et_modules"
-    cp "$SCRIPT_DIR/et_modules/"*.py "$INSTALL_DIR/et_modules/"
+        # Copy sentinel_core package
+        mkdir -p "$INSTALL_DIR/sentinel_core"
+        cp "$SCRIPT_DIR/sentinel_core/"*.py "$INSTALL_DIR/sentinel_core/"
+
+        # Copy et_modules package
+        mkdir -p "$INSTALL_DIR/et_modules"
+        cp "$SCRIPT_DIR/et_modules/"*.py "$INSTALL_DIR/et_modules/"
+    fi
 
     # Create data directories
     mkdir -p "$INSTALL_DIR/models"
