@@ -63,7 +63,7 @@ class TrollGuardHook(OpenClawAdapter):
     MODULE_ID = "trollguard"
     SKILL_NAME = "TrollGuard Security"
     WORKSPACE_ENV = "TROLLGUARD_WORKSPACE_DIR"
-    DEFAULT_WORKSPACE = "~/.openclaw/trollguard"
+    DEFAULT_WORKSPACE = "~/TrollGuard/data"
 
     def __init__(self) -> None:
         super().__init__()

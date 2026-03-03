@@ -738,8 +738,8 @@ Previous versions of the ET Module Manager maintained a `KNOWN_LOCATIONS`
 list that scanned 7+ hardcoded paths for `et_module.json` files.  This
 was deleted on 2026-02-20 because it was the root cause of **ghost
 filesystem creation**: when deploy scripts copied module files to multiple
-locations (e.g., `~/NeuroGraph/`, `~/.openclaw/skills/neurograph/`,
-`~/.neurograph/repo/`), the scanner treated every copy as a distinct
+locations (e.g., `~/NeuroGraph/`, `~/.openclaw/workspace/skills/neurograph/`,
+`~/NeuroGraph/ (canonical)`), the scanner treated every copy as a distinct
 install, creating duplicate registrations that broke updates and confused
 users.
 

@@ -21,7 +21,7 @@ Usage (inside a module's openclaw hook file):
         MODULE_ID = "trollguard"
         SKILL_NAME = "TrollGuard Security"
         WORKSPACE_ENV = "TROLLGUARD_WORKSPACE_DIR"
-        DEFAULT_WORKSPACE = "~/.openclaw/trollguard"
+        DEFAULT_WORKSPACE = "~/TrollGuard/data"
 
         def _embed(self, text: str) -> "np.ndarray":
             # Return your module's embedding for text.

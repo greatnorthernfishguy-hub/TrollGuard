@@ -40,7 +40,7 @@ autoload: true
 - OpenClaw adapter provides standard `on_message()`, `recall()`, `stats()` interface
 
 ## Environment Variables
-- `TROLLGUARD_WORKSPACE_DIR` — Workspace directory (default: `~/.openclaw/trollguard`)
+- `TROLLGUARD_WORKSPACE_DIR` — Workspace directory (default: `~/TrollGuard/data`)
 
 ## Usage
 TrollGuard auto‑loads as an OpenClaw skill and scans all incoming messages.

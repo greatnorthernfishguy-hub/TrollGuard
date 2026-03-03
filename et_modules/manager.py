@@ -10,14 +10,14 @@ as a unified ecosystem.
 #         discover() now reads ONLY from ~/.et_modules/registry.json.
 #   Why:  The KNOWN_LOCATIONS scanner was the root cause of ghost file
 #         systems.  It scanned 7 hardcoded paths (~/NeuroGraph,
-#         ~/.openclaw/skills/neurograph, /opt/trollguard, etc.) and
+#         ~/.openclaw/workspace/skills/neurograph, ~/TrollGuard, etc.) and
 #         treated any directory with et_module.json as a real install.
 #         When deploy scripts copied files to multiple locations,
 #         the scanner "discovered" every copy as a distinct install,
 #         creating duplicate registrations.  On Josh's system:
 #           /home/josh/NeuroGraph/                  ← the real one
-#           /home/josh/.openclaw/skills/neurograph/  ← ghost
-#           /home/josh/.neurograph/repo/             ← ghost
+#           /home/josh/.openclaw/workspace/skills/neurograph/  ← ghost
+#           /home/josh/NeuroGraph/ (canonical)             ← ghost
 #         The scanner couldn't distinguish real from ghost.
 #   How:  registry.json is now the SOLE source of truth.  Modules
 #         exist to the ecosystem ONLY when their installer writes an
