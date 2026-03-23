@@ -18,6 +18,25 @@ SKILL.md entry:
     hook: trollguard_hook.py::get_instance
 
 # ---- Changelog ----
+# [2026-03-19] Claude Code (Opus 4.6) — Migrate to fastembed + BAAI/bge-base-en-v1.5 (#45)
+# What: Replaced sentence-transformers SentenceTransformer with fastembed
+#   TextEmbedding. Model all-MiniLM-L6-v2 → BAAI/bge-base-en-v1.5 (768-dim).
+# Why: Ecosystem-wide embedding migration. sentence-transformers was the
+#   instigating failure that broke the ecosystem. Punchlist #45.
+# How: _embed() rewritten: fastembed lazy-load + embed, hash fallback.
+# -------------------
+# [2026-03-18] Claude (CC) — Fix target_id Law 7 violation (#30)
+# What: Changed target_id from category labels ("threat:MALICIOUS") to
+#   content-derived identifiers ("scan:{embedding_hash}"). The substrate
+#   now learns from the actual threat pattern, not from labels.
+# Why: Punch list #30. Classification at input = extraction boundary
+#   violation. The substrate learned "MALICIOUS" as a node, not the
+#   content pattern that was malicious. All threats of the same label
+#   were indistinguishable to the substrate.
+# How: target_id = "scan:{sha256(embedding)[:16]}" — content-derived,
+#   unique per input pattern. The substrate associates the specific
+#   embedding with the outcome, not a label with the outcome.
+# -------------------
 # [2026-02-22] Claude (Sonnet 4.6) — Refactored to OpenClawAdapter standard.
 #   What: Replaced bespoke singleton hook with OpenClawAdapter subclass.
 #         Moved ecosystem wiring (NGLite, peer bridge, Tier 3 upgrade)
@@ -46,6 +65,12 @@ SKILL.md entry:
 """
 
 from __future__ import annotations
+
+# Auto-update on startup — pull latest code + sync vendored files
+try:
+    from ng_updater import auto_update; auto_update()
+except Exception:
+    pass  # Never prevent module startup
 
 import logging
 from typing import Any, Dict, Optional
@@ -88,14 +113,14 @@ class TrollGuardHook(OpenClawAdapter):
     # -----------------------------------------------------------------
 
     def _embed(self, text: str) -> np.ndarray:
-        """Embed text using sentence-transformers, fall back to hash."""
-        try:
-            from sentence_transformers import SentenceTransformer
+        """Embed text via ng_embed (centralized ecosystem embedding).
 
-            if not hasattr(self, "_st_model"):
-                self._st_model = SentenceTransformer("all-MiniLM-L6-v2")
-            vec = self._st_model.encode(text, normalize_embeddings=True)
-            return np.array(vec, dtype=np.float32)
+        Ecosystem standard: Snowflake/snowflake-arctic-embed-m-v1.5 (768-dim).
+        ONNX Runtime, no torch dependency.
+        """
+        try:
+            from ng_embed import embed
+            return embed(text)
         except Exception:
             return self._hash_embed(text)
 
@@ -122,12 +147,20 @@ class TrollGuardHook(OpenClawAdapter):
             if scan_result.get("threat"):
                 self._threat_count += 1
 
-                # Feed outcome back into ecosystem learning
-                self._eco.record_outcome(
-                    embedding,
-                    target_id=f"threat:{scan_result.get('label', 'unknown')}",
+                # Dual-pass outcome: forest + tree concepts (Punchlist #81)
+                # target_id is content-derived, not a category label.
+                # The substrate learns from the actual threat pattern.
+                import hashlib as _hl
+                _emb_hash = _hl.sha256(embedding.tobytes()).hexdigest()[:16]
+                self._eco.dual_record_outcome(
+                    content=text,
+                    embedding=embedding,
+                    target_id=f"scan:{_emb_hash}",
                     success=not scan_result.get("threat", False),
-                    metadata={"confidence": scan_result.get("confidence", 0.0)},
+                    metadata={
+                        "confidence": scan_result.get("confidence", 0.0),
+                        "label": scan_result.get("label", "unknown"),
+                    },
                 )
         except Exception as exc:
             result["scan_status"] = f"error: {exc}"
