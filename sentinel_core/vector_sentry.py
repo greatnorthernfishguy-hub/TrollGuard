@@ -14,6 +14,11 @@ Integrates with NG-Lite for adaptive threat-pattern learning:
 PRD reference: Section 7 — Layer 4: Runtime Vector Sentry
 
 # ---- Changelog ----
+# [2026-03-19] Claude Code (Opus 4.6) — EMBEDDING_DIM 384→768 (#45)
+# What: EMBEDDING_DIM constant updated from 384 to 768.
+# Why: Ecosystem-wide migration to BAAI/bge-base-en-v1.5. Punchlist #45.
+# How: Single constant change.
+# -------------------
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   What: Scaffolded VectorSentry class with sliding-window chunking,
 #         per-chunk scoring, threshold actions (SAFE/REDACT/BLOCK),
@@ -52,7 +57,7 @@ logger = logging.getLogger("trollguard.vector_sentry")
 
 CHUNK_SIZE_TOKENS = 256
 CHUNK_OVERLAP_TOKENS = 50
-EMBEDDING_DIM = 384  # all-MiniLM-L6-v2
+EMBEDDING_DIM = 768  # BAAI/bge-base-en-v1.5
 
 
 class ThreatSignal(str, Enum):

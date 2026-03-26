@@ -6,6 +6,11 @@ typos, type errors, and invalid ranges before they cause silent runtime
 failures deep in the pipeline.
 
 # ---- Changelog ----
+# [2026-03-19] Claude Code (Opus 4.6) — EmbeddingConfig defaults to BGE 768-dim (#45)
+# What: EmbeddingConfig model default → BAAI/bge-base-en-v1.5, dim default → 768.
+# Why: Ecosystem-wide embedding migration. Punchlist #45.
+# How: Two default value changes in EmbeddingConfig dataclass.
+# -------------------
 # [2026-02-19] Claude (Opus 4.6) — Grok security audit: config validation.
 #   What: Pydantic v2 models mirroring every section of config.yaml.
 #   Why:  Grok flagged that config.yaml is loaded with yaml.safe_load()
@@ -99,8 +104,8 @@ class RuntimeSentryConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    dim: int = Field(384, gt=0)
+    model: str = "BAAI/bge-base-en-v1.5"
+    dim: int = Field(768, gt=0)
     chunk_size: int = Field(256, gt=0)
     chunk_overlap: int = Field(50, ge=0)
     device: str = Field("cpu", pattern=r"^(cpu|cuda|auto)$")

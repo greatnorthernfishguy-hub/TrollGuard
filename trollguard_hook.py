@@ -165,6 +165,14 @@ class TrollGuardHook(OpenClawAdapter):
         except Exception as exc:
             result["scan_status"] = f"error: {exc}"
 
+        # Domain-specific substrate outcome (#18)
+        # Adapter reads these and records to ecosystem with domain context
+        is_threat = result.get("threat", False)
+        import hashlib as _hl2
+        _emb_hash2 = _hl2.sha256(embedding.tobytes()).hexdigest()[:16]
+        result["_substrate_target_id"] = f"scan:{_emb_hash2}"
+        result["_substrate_success"] = not is_threat  # clean = success, threat = failure
+
         return result
 
     def _module_stats(self) -> Dict[str, Any]:

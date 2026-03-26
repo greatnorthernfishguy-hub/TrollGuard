@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "module_id": "trollguard",
+  "timestamp": 1771847155.287832,
+  "config": {
+    "max_nodes": 1000,
+    "max_synapses": 5000,
+    "learning_rate": 0.1,
+    "success_boost": 0.15,
+    "failure_penalty": 0.2,
+    "novelty_threshold": 0.7,
+    "pruning_threshold": 0.01,
+    "embedding_dim": 384,
+    "hash_dims": 128,
+    "snapshot_version": "1.0.0"
+  },
+  "nodes": {},
+  "synapses": {},
+  "counters": {
+    "node_id_counter": 0,
+    "total_outcomes": 0,
+    "total_successes": 0
+  }
+}

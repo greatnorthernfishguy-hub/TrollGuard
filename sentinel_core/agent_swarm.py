@@ -152,6 +152,14 @@ class SwarmAudit:
             "agent_b_model": "kimi-k2.5",
             "agent_c_tier": AgentCTier.STATISTICAL.value,
             "max_retries": 3,
+            # Agent C anomaly detection thresholds (SVG Phase 3)
+            "layer_disagreement_threshold": 0.6,
+            "reasoning_min_length": 50,
+            "reasoning_max_length": 10000,
+            "timing_max_ms": 60000,
+            "timing_min_ms": 100,
+            "anomaly_unsafe_count": 3,
+            "anomaly_suspicious_count": 1,
             **(config or {}),
         }
 
@@ -452,18 +460,20 @@ class SwarmAudit:
         cisco = telemetry.get("cisco_result") or {}
         l2_score = telemetry.get("layer2_score", 0.0)
         cisco_safe = cisco.get("is_safe", True)
-        if cisco_safe and l2_score > 0.6:
+        if cisco_safe and l2_score > self.config.get("layer_disagreement_threshold", 0.6):
             anomalies.append(
                 f"Layer disagreement: Cisco=SAFE but ML score={l2_score:.2f}"
             )
 
         # Rule 3: Agent A output length anomaly (very short or very long)
         reasoning_len = telemetry.get("agent_a_reasoning_length", 0)
-        if reasoning_len < 50:
+        min_len = self.config.get("reasoning_min_length", 50)
+        max_len = self.config.get("reasoning_max_length", 10000)
+        if reasoning_len < min_len:
             anomalies.append(
                 f"Agent A reasoning suspiciously short ({reasoning_len} chars)"
             )
-        elif reasoning_len > 10000:
+        elif reasoning_len > max_len:
             anomalies.append(
                 f"Agent A reasoning suspiciously long ({reasoning_len} chars)"
             )
@@ -478,17 +488,19 @@ class SwarmAudit:
 
         # Rule 5: Timing anomalies
         a_time = telemetry.get("agent_a_time_ms", 0)
-        if a_time > 60000:  # > 60 seconds
+        timing_max = self.config.get("timing_max_ms", 60000)
+        timing_min = self.config.get("timing_min_ms", 100)
+        if a_time > timing_max:
             anomalies.append(f"Agent A unusually slow ({a_time:.0f}ms)")
-        elif a_time > 0 and a_time < 100:
+        elif a_time > 0 and a_time < timing_min:
             anomalies.append(f"Agent A suspiciously fast ({a_time:.0f}ms)")
 
         # Derive verdict
         if any("confirmed injection" in a for a in anomalies):
             verdict = "UNSAFE"
-        elif len(anomalies) >= 3:
+        elif len(anomalies) >= self.config.get("anomaly_unsafe_count", 3):
             verdict = "UNSAFE"
-        elif len(anomalies) >= 1:
+        elif len(anomalies) >= self.config.get("anomaly_suspicious_count", 1):
             verdict = "SUSPICIOUS"
         else:
             verdict = "SAFE"

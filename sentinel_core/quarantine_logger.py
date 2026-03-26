@@ -119,11 +119,13 @@ class QuarantineLogger:
         self,
         quarantine_path: str = "quarantine.json",
         retrain_threshold: int = 50,
+        max_raw_text: int = 5000,
     ):
         self._path = Path(quarantine_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._incident_count = 0
         self._retrain_threshold = retrain_threshold
+        self._max_raw_text = max_raw_text
 
     def log_incident(
         self,
@@ -163,7 +165,7 @@ class QuarantineLogger:
             "trigger_engine": trigger_engine,
             "layer": layer,
             "vector_score": round(vector_score, 6),
-            "raw_text": raw_text[:5000],  # Cap for storage
+            "raw_text": raw_text[:self._max_raw_text],  # Cap for storage
             "vector_embedding": vector_embedding,
             "pipeline_telemetry": pipeline_telemetry or {},
             "canary_result": canary_result,
