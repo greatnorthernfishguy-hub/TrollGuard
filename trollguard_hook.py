@@ -102,7 +102,7 @@ class TrollGuardHook(OpenClawAdapter):
     def _init_scanner(self) -> None:
         """Initialize the TrollGuard scan pipeline."""
         try:
-            from sentinel_core.ml_classifier import MLClassifier
+            from sentinel_core.ml_classifier import SentinelClassifier
             # ... real initialization ...
             logger.info("TrollGuard scanner initialized")
         except Exception as exc:
