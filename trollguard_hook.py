@@ -86,6 +86,7 @@ class TrollGuardHook(OpenClawAdapter):
     """OpenClaw integration hook for TrollGuard."""
 
     MODULE_ID = "trollguard"
+    SKIP_ECOSYSTEM = True
     SKILL_NAME = "TrollGuard Security"
     WORKSPACE_ENV = "TROLLGUARD_WORKSPACE_DIR"
     DEFAULT_WORKSPACE = "~/TrollGuard/data"
@@ -152,16 +153,17 @@ class TrollGuardHook(OpenClawAdapter):
                 # The substrate learns from the actual threat pattern.
                 import hashlib as _hl
                 _emb_hash = _hl.sha256(embedding.tobytes()).hexdigest()[:16]
-                self._eco.dual_record_outcome(
-                    content=text,
-                    embedding=embedding,
-                    target_id=f"scan:{_emb_hash}",
-                    success=not scan_result.get("threat", False),
-                    metadata={
-                        "confidence": scan_result.get("confidence", 0.0),
-                        "label": scan_result.get("label", "unknown"),
-                    },
-                )
+                if self._eco:
+                    self._eco.dual_record_outcome(
+                        content=text,
+                        embedding=embedding,
+                        target_id=f"scan:{_emb_hash}",
+                        success=not scan_result.get("threat", False),
+                        metadata={
+                            "confidence": scan_result.get("confidence", 0.0),
+                            "label": scan_result.get("label", "unknown"),
+                        },
+                    )
         except Exception as exc:
             result["scan_status"] = f"error: {exc}"
 
