@@ -77,6 +77,7 @@ except Exception:
     pass  # Never prevent module startup
 
 import logging
+import threading
 from typing import Any, Dict, Optional
 
 import numpy as np
