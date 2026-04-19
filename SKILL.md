@@ -2,7 +2,6 @@
 name: trollguard
 description: "TrollGuard is a 4-layer security pipeline that protects AI agents from prompt injection and adversarial attacks. It implements a 'Zero Trust for Text' philosophy: every string of text entering the system is treated as a potential prompt injection until mathematically proven otherwise."
 metadata: { "openclaw": { "emoji": "🛡️", "requires": {} } }
-hook: trollguard_hook.py::get_instance
 ---
 
 # TrollGuard Security
