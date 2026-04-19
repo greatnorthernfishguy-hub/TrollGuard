@@ -18,6 +18,10 @@ SKILL.md entry:
     hook: trollguard_hook.py::get_instance
 
 # ---- Changelog ----
+# [2026-04-19] CC (punchlist #5) -- Add pulse loop + River drain (first ever)
+#   What: _pulse_loop() daemon thread drains River tracts between conversations.
+#   Why:  TrollGuard never had a pulse loop despite fanout removal requiring one.
+#   How:  Standard pattern (Immunis/Darwin). _pulse_cycle() calls _drain_river().
 # [2026-03-19] Claude Code (Opus 4.6) — Migrate to fastembed + BAAI/bge-base-en-v1.5 (#45)
 # What: Replaced sentence-transformers SentenceTransformer with fastembed
 #   TextEmbedding. Model all-MiniLM-L6-v2 → BAAI/bge-base-en-v1.5 (768-dim).
@@ -100,6 +104,13 @@ class TrollGuardHook(OpenClawAdapter):
         self._threat_count = 0
         self._init_scanner()
 
+        # Pulse loop — drains River tracts between conversations (#5)
+        self._in_conversation = False
+        self._pulse_thread = threading.Thread(
+            target=self._pulse_loop, name="trollguard-pulse", daemon=True
+        )
+        self._pulse_thread.start()
+
     def _init_scanner(self) -> None:
         """Initialize the TrollGuard scan pipeline."""
         try:
@@ -124,6 +135,25 @@ class TrollGuardHook(OpenClawAdapter):
             return embed(text)
         except Exception:
             return self._hash_embed(text)
+
+    def on_conversation_started(self) -> None:
+        self._in_conversation = True
+
+    def on_conversation_ended(self) -> None:
+        self._in_conversation = False
+
+    def _pulse_loop(self) -> None:
+        import time as _t
+        while True:
+            try:
+                self._pulse_cycle()
+            except Exception as _exc:
+                logger.debug("TrollGuard pulse error: %s", _exc)
+            _t.sleep(10.0 if self._in_conversation else 60.0)
+
+    def _pulse_cycle(self) -> None:
+        """Drain River tracts and process substrate signals."""
+        self._drain_river()
 
     def _module_on_message(self, text: str, embedding: np.ndarray) -> Dict[str, Any]:
         """Run TrollGuard's security scan on the incoming message."""
