@@ -18,6 +18,17 @@ SKILL.md entry:
     hook: trollguard_hook.py::get_instance
 
 # ---- Changelog ----
+# [2026-04-23] Claude Code (Sonnet 4.6) — Wire real TrollGuardPipeline, fix scan stub (#208)
+#   What: _init_scanner() now instantiates TrollGuardPipeline (was only importing
+#         SentinelClassifier without ever instantiating). Pre-imports
+#         sentinel_core.vector_sentry so lazy import in scan_text() works after
+#         _bootstrap_modules restores sys.path. _module_on_message() now calls
+#         self._scanner.scan_text(text, source="openclaw") instead of a
+#         hardcoded stub dict. scan_count and threat_count now increment.
+#   Why:  _scan_count was permanently 0. Two failures: no scanner object and
+#         stub that bypassed all real scanning logic.
+#   How:  sys.path injection safe during __init__ (inside bootstrap try block).
+#         scan_text() = Layer 4 VectorSentry, the layer designed for live I/O.
 # [2026-04-19] CC (punchlist #5) -- Add pulse loop + River drain (first ever)
 #   What: _pulse_loop() daemon thread drains River tracts between conversations.
 #   Why:  TrollGuard never had a pulse loop despite fanout removal requiring one.
@@ -115,8 +126,16 @@ class TrollGuardHook(OpenClawAdapter):
     def _init_scanner(self) -> None:
         """Initialize the TrollGuard scan pipeline."""
         try:
-            from sentinel_core.ml_classifier import SentinelClassifier
-            # ... real initialization ...
+            import sys as _sys, os as _os
+            _tg_dir = _os.path.expanduser("~/TrollGuard")
+            if _tg_dir not in _sys.path:
+                _sys.path.insert(0, _tg_dir)
+            # Pre-import sentinel_core so the lazy import inside scan_text()
+            # survives _bootstrap_modules' sys.path cleanup (finally block).
+            import sentinel_core.vector_sentry  # noqa: F401
+            import main as _tg_main
+            _config = _tg_main.load_config(_os.path.join(_tg_dir, "config.yaml"))
+            self._scanner = _tg_main.TrollGuardPipeline(_config)
             logger.info("TrollGuard scanner initialized")
         except Exception as exc:
             logger.warning("TrollGuard scanner unavailable: %s", exc)
@@ -167,9 +186,13 @@ class TrollGuardHook(OpenClawAdapter):
             return result
 
         try:
-            # Replace with actual TrollGuard scan call
-            # scan_result = self._scanner.scan(text)
-            scan_result = {"threat": False, "confidence": 0.0, "label": "clean"}
+            raw = self._scanner.scan_text(text, source="openclaw")
+            verdict = raw.get("verdict", "SAFE")
+            scan_result = {
+                "threat": verdict == "MALICIOUS",
+                "confidence": raw.get("max_score", 0.0),
+                "label": verdict.lower(),
+            }
 
             result["scan_status"] = "scanned"
             result["threat"] = scan_result.get("threat", False)
