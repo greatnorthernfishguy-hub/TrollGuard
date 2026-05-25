@@ -18,6 +18,17 @@ SKILL.md entry:
     hook: trollguard_hook.py::get_instance
 
 # ---- Changelog ----
+# [2026-05-25] Claude Code (Sonnet 4.6) — NEW-12+8: Autonomic write on threat + document River stub
+#   What: (1) Added _autonomic_last_state tracking + _update_autonomic_state() — writes SYMPATHETIC
+#         when threat detected, PARASYMPATHETIC when clear. Mirrors Immunis pattern (same struct).
+#         (2) Documented that _on_river_events() is intentionally not overridden in CLAUDE.md §8.
+#   Why:  TrollGuard is one of three authorized autonomic writers (§3 CLAUDE.md) but never called
+#         ng_autonomic.write_state(). SYMPATHETIC was never actually being set by TrollGuard despite
+#         being its core perimeter responsibility. Immunis already implements this pattern correctly.
+#   How:  _update_autonomic_state(is_threat, confidence) called after is_threat assignment.
+#         Confidence → threat_level: ≥0.90 critical, ≥0.70 high, else medium. Clear on clean
+#         scan if we last wrote SYMPATHETIC (single clean message resets — matches text threat
+#         domain where threats are per-message, not persistent like host-level Immunis threats).
 # [2026-04-23] Claude Code (Sonnet 4.6) — Wire real TrollGuardPipeline, fix scan stub (#208)
 #   What: _init_scanner() now instantiates TrollGuardPipeline (was only importing
 #         SentinelClassifier without ever instantiating). Pre-imports
@@ -115,6 +126,9 @@ class TrollGuardHook(OpenClawAdapter):
         self._scan_count = 0
         self._threat_count = 0
         self._init_scanner()
+
+        # Autonomic state tracking — write SYMPATHETIC on threat, clear on clean
+        self._autonomic_last_state: str = "PARASYMPATHETIC"
 
         # Pulse loop — drains River tracts between conversations (#5)
         self._in_conversation = False
@@ -224,12 +238,41 @@ class TrollGuardHook(OpenClawAdapter):
         # Domain-specific substrate outcome (#18)
         # Adapter reads these and records to ecosystem with domain context
         is_threat = result.get("threat", False)
+        self._update_autonomic_state(is_threat, result.get("threat_confidence", 0.0))
         import hashlib as _hl2
         _emb_hash2 = _hl2.sha256(embedding.tobytes()).hexdigest()[:16]
         result["_substrate_target_id"] = f"scan:{_emb_hash2}"
         result["_substrate_success"] = not is_threat  # clean = success, threat = failure
 
         return result
+
+    def _update_autonomic_state(self, is_threat: bool, confidence: float) -> None:
+        """Write SYMPATHETIC on text-level threat; clear to PARASYMPATHETIC on clean scan."""
+        try:
+            import ng_autonomic
+            if is_threat:
+                if confidence >= 0.90:
+                    level = "critical"
+                elif confidence >= 0.70:
+                    level = "high"
+                else:
+                    level = "medium"
+                if self._autonomic_last_state != "SYMPATHETIC":
+                    ng_autonomic.write_state(
+                        "SYMPATHETIC", level, "trollguard",
+                        f"text-level threat detected (confidence={confidence:.2f})",
+                    )
+                    self._autonomic_last_state = "SYMPATHETIC"
+            else:
+                if self._autonomic_last_state == "SYMPATHETIC":
+                    ng_autonomic.write_state(
+                        "PARASYMPATHETIC", "none", "trollguard",
+                        "no threat in text stream",
+                    )
+                    self._autonomic_last_state = "PARASYMPATHETIC"
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger("trollguard").debug("autonomic write failed: %s", exc)
 
     def _module_stats(self) -> Dict[str, Any]:
         """TrollGuard-specific telemetry."""

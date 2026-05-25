@@ -154,6 +154,7 @@ TrollGuard runs as a sidecar within TID's request pipeline (`inference_differenc
 - TrollGuard **never** detects host-level threats (process compromise, filesystem attacks) — Immunis's domain
 - TrollGuard **never** calls other modules directly — Law 1
 - TrollGuard **never** classifies experience before feeding it to the substrate — Law 7
+- TrollGuard **does not override `_on_river_events()`** — this is intentional. TrollGuard's threat assessment is per-message at text time. It does not need to react to substrate topology changes arriving via the River. It sets the autonomic state; other modules read and adjust. Incoming River events are irrelevant to text-level scanning. The base class stub in `openclaw_adapter.py` is the correct behavior here.
 
 TrollGuard's domain is **text-level threat filtering**. If a threat is not in the text stream, it is not TrollGuard's concern.
 
