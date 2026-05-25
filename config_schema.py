@@ -104,7 +104,7 @@ class RuntimeSentryConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    model: str = "BAAI/bge-base-en-v1.5"
+    model: str = "Snowflake/snowflake-arctic-embed-m-v1.5"
     dim: int = Field(768, gt=0)
     chunk_size: int = Field(256, gt=0)
     chunk_overlap: int = Field(50, ge=0)
