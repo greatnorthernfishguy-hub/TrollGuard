@@ -20,6 +20,20 @@ verdict.
 PRD reference: Section 7.3 — Integration with OpenClaw
 
 # ---- Changelog ----
+# [2026-06-03] Claude Code (Opus 4.7) — Phase 3 Step 3 (substrate-as-protocol PRD §4.13)
+#   What: Removed dead-path `result["peer_bridge"] = pipeline._peer_bridge.get_stats()`
+#         from /stats endpoint else-branch (the no-NGEcosystem legacy path).
+#   Why:  Phase 3 of substrate-as-protocol restoration: drift accumulation in
+#         a path no longer reachable in deployed Tier 2/3 state. The preferred
+#         `if pipeline._eco is not None` branch already includes peer_bridge
+#         stats via `_eco.stats()` → `ng_ecosystem.py:626 "peer_bridge"`. The
+#         else-branch fires only at Tier 1 isolation, which deployed TrollGuard
+#         doesn't run. Removing field per PRD step 3 "OR remove field" option.
+#   How:  Deleted two lines from the else-branch of stats(). No downstream
+#         consumers in this codebase read the peer_bridge field from api.py's
+#         /stats output (main.py:670 reads it from `eco_stats`, the canonical
+#         _eco.stats() output, not from this api.py response).
+# -------------------
 # [2026-02-19] Claude (Opus 4.6) — Grok security audit: non-blocking scans + background tasks.
 #   What: Wrapped blocking scan calls in asyncio.to_thread() so ML
 #         inference and file I/O don't block the event loop.  Added
@@ -361,8 +375,8 @@ async def stats():
     else:
         if pipeline._ng_lite is not None:
             result["ng_lite"] = pipeline._ng_lite.get_stats()
-        if pipeline._peer_bridge is not None:
-            result["peer_bridge"] = pipeline._peer_bridge.get_stats()
+        # peer_bridge stats field removed 2026-06-03 (substrate-as-protocol
+        # PRD Phase 3 Step 3) — see changelog header.
 
     if _sentry is not None:
         result["sentry"] = _sentry.get_stats()
