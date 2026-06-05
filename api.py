@@ -20,6 +20,20 @@ verdict.
 PRD reference: Section 7.3 — Integration with OpenClaw
 
 # ---- Changelog ----
+# [2026-06-05] Claude Code (Opus 4.7) — Phase 6 drift-bait removal (substrate-as-protocol PRD §6)
+#   What: Renamed /health response field `peer_bridge_connected` → `tract_bridge_connected`.
+#         The Pydantic response model field name + the field-init call in stats() endpoint.
+#   Why:  Post-Phase 5, NGTractBridge is the sole peer bridge. The legacy
+#         `peer_bridge_connected` name lied about current architecture — future-CC
+#         reading it would think NGPeerBridge still exists and try to "complete"
+#         what looks like missing code. Drift-bait pattern; eliminating the bait.
+#   How:  Two surgical edits — the Pydantic field declaration + the named-arg in
+#         the stats() handler's response-model construction. Internal attribute
+#         `pipeline._peer_bridge` left alone (will rename in a separate
+#         coordinated pass; this fix is /health-surface-only). Downstream consumers
+#         that read the /health field by name will need to update — none found in
+#         this codebase or in MASTER cross-refs.
+# -------------------
 # [2026-06-03] Claude Code (Opus 4.7) — Phase 3 Step 3 (substrate-as-protocol PRD §4.13)
 #   What: Removed dead-path `result["peer_bridge"] = pipeline._peer_bridge.get_stats()`
 #         from /stats endpoint else-branch (the no-NGEcosystem legacy path).
@@ -210,7 +224,7 @@ class HealthResponse(BaseModel):
     status: str
     uptime_seconds: float
     ng_lite_connected: bool
-    peer_bridge_connected: bool
+    tract_bridge_connected: bool  # renamed 2026-06-05 from peer_bridge_connected (Phase 6 drift-bait removal)
     pipeline_ready: bool
 
 
@@ -355,7 +369,7 @@ async def health():
         status="healthy",
         uptime_seconds=round(time.time() - _startup_time, 1),
         ng_lite_connected=pipeline._ng_lite is not None,
-        peer_bridge_connected=pipeline._peer_bridge is not None,
+        tract_bridge_connected=pipeline._peer_bridge is not None,  # field renamed 2026-06-05 — internal attr stays for now
         pipeline_ready=True,
     )
 
