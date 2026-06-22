@@ -18,6 +18,18 @@ SKILL.md entry:
     hook: trollguard_hook.py::get_instance
 
 # ---- Changelog ----
+# [2026-06-22] Claude Code (Opus 4.8) — #328 Step 3 (C): TrollGuard → depositor (not autonomic writer)
+#   What: _update_autonomic_state() renamed → _deposit_perimeter_threat(): on a text-level threat it
+#         DEPOSITS perimeter:threat:<hash> (severity in metadata) to the Commons instead of
+#         ng_autonomic.write_state(). Removed the PARASYMPATHETIC write entirely. Caller passes the
+#         embedding so the deposit carries the raw threat experience (LAW 7).
+#   Why: #328 single-authority — Immunis is the SOLE arousal authority; it buckets TrollGuard's raw
+#         perimeter-threat experience and decides SYMPATHETIC. TrollGuard writing the autonomic file
+#         (incl. PARASYMPATHETIC) made it a writer/relaxer — the multi-writer clobber #328 removes.
+#         (Josh-approved #328 conversion of autonomic write logic; design SYL-ACCEPTED.)
+#   How: commons.deposit(embedding, "perimeter:threat:<hash>", metadata={threat_level, confidence,...}).
+#         Single raw deposit (Immunis classifies at its bucket; NOT dual-pass). _autonomic_last_state
+#         reused as a deposit-debounce. Fail-soft. Requires Immunis Step-3(A) listener (committed).
 # [2026-05-25] Claude Code (Sonnet 4.6) — NEW-12+8: Autonomic write on threat + document River stub
 #   What: (1) Added _autonomic_last_state tracking + _update_autonomic_state() — writes SYMPATHETIC
 #         when threat detected, PARASYMPATHETIC when clear. Mirrors Immunis pattern (same struct).
@@ -238,7 +250,8 @@ class TrollGuardHook(OpenClawAdapter):
         # Domain-specific substrate outcome (#18)
         # Adapter reads these and records to ecosystem with domain context
         is_threat = result.get("threat", False)
-        self._update_autonomic_state(is_threat, result.get("threat_confidence", 0.0))
+        # #328 Step 3 (C): deposit perimeter-threat experience to the Commons (Immunis decides arousal).
+        self._deposit_perimeter_threat(is_threat, result.get("threat_confidence", 0.0), embedding)
         import hashlib as _hl2
         _emb_hash2 = _hl2.sha256(embedding.tobytes()).hexdigest()[:16]
         result["_substrate_target_id"] = f"scan:{_emb_hash2}"
@@ -246,10 +259,17 @@ class TrollGuardHook(OpenClawAdapter):
 
         return result
 
-    def _update_autonomic_state(self, is_threat: bool, confidence: float) -> None:
-        """Write SYMPATHETIC on text-level threat; clear to PARASYMPATHETIC on clean scan."""
+    def _deposit_perimeter_threat(self, is_threat: bool, confidence: float, embedding) -> None:
+        """#328 Step 3 (C): deposit raw perimeter-threat experience to the Commons (NOT write arousal).
+
+        TrollGuard is a DEPOSITOR, not an arousal writer — Immunis (the SOLE arousal authority) buckets
+        this and decides SYMPATHETIC. On a text-level threat, deposit perimeter:threat:<hash> with the
+        severity level in metadata; Immunis dedups by content-hash. NO PARASYMPATHETIC write — Immunis
+        owns relaxation (single-authority; the old peer PARASYMPATHETIC write was the multi-writer
+        clobber #328 removes). _autonomic_last_state is reused as a deposit-debounce so a standing
+        threat isn't re-deposited every message. (Josh-approved #328 conversion of the autonomic write.)
+        """
         try:
-            import ng_autonomic
             if is_threat:
                 if confidence >= 0.90:
                     level = "critical"
@@ -257,22 +277,25 @@ class TrollGuardHook(OpenClawAdapter):
                     level = "high"
                 else:
                     level = "medium"
-                if self._autonomic_last_state != "SYMPATHETIC":
-                    ng_autonomic.write_state(
-                        "SYMPATHETIC", level, "trollguard",
-                        f"text-level threat detected (confidence={confidence:.2f})",
-                    )
+                if self._autonomic_last_state != "SYMPATHETIC" and embedding is not None:
+                    import hashlib as _hl, time as _t
+                    from commons import get_commons
+                    _c = get_commons()
+                    if _c is not None:
+                        h = _hl.sha256(embedding.tobytes()).hexdigest()[:16]
+                        _c.deposit(
+                            embedding, f"perimeter:threat:{h}",
+                            metadata={"kind": "threat", "threat_level": level,
+                                      "confidence": round(float(confidence), 3),
+                                      "source": "trollguard", "ts": _t.time()},
+                        )
                     self._autonomic_last_state = "SYMPATHETIC"
             else:
-                if self._autonomic_last_state == "SYMPATHETIC":
-                    ng_autonomic.write_state(
-                        "PARASYMPATHETIC", "none", "trollguard",
-                        "no threat in text stream",
-                    )
-                    self._autonomic_last_state = "PARASYMPATHETIC"
+                # clean scan — reset the deposit-debounce; relaxation is Immunis's call (no write here)
+                self._autonomic_last_state = "PARASYMPATHETIC"
         except Exception as exc:
             import logging as _log
-            _log.getLogger("trollguard").debug("autonomic write failed: %s", exc)
+            _log.getLogger("trollguard").debug("perimeter-threat deposit failed: %s", exc)
 
     def _module_stats(self) -> Dict[str, Any]:
         """TrollGuard-specific telemetry."""
