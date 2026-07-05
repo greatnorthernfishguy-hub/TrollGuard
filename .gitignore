@@ -53,3 +53,9 @@ training_data/*.parquet
 .DS_Store
 Thumbs.db
 data/
+
+# Ecosystem-wide hygiene standard (repo-hygiene bot)
+*.pt
+fastembed_cache/
+node_modules/
+.neurograph/
