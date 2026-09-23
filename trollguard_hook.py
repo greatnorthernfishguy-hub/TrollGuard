@@ -8,7 +8,7 @@ OpenClaw calls get_instance().on_message(text) on every turn.
 The adapter handles all ecosystem wiring (Tier 1/2/3 learning) and
 memory logging.  This file only implements what's unique to TrollGuard:
 
-  - _embed():              Sentence-transformer / hash fallback
+  - _embed():              Centralized ecosystem embed wrapper (fail-closed)
   - _module_on_message():  Run the security scan pipeline
   - _module_stats():       TrollGuard-specific telemetry
 
@@ -18,6 +18,18 @@ SKILL.md entry:
     hook: trollguard_hook.py::get_instance
 
 # ---- Changelog ----
+# [2026-09-22] Claude Code (Kimi k2.7) — Z11 row-1 repair-forward: fail-closed _embed(), no hash fallback.
+#   What: _embed() now catches only EmbeddingUnavailableError / DualPassIncompleteError from
+#         ng_embed, logs the degradation clearly, and re-raises.  Removed the broad Exception
+#         catch + self._hash_embed() fallback that fabricated vectors when ONNX/tokenizers
+#         were unavailable.
+#   Why:  Canonical ng_embed (re-vendored 2026-09-21) is fail-closed by design.  The previous
+#         hash fallback poisoned the substrate with synthetic embeddings and violated Law 7
+#         (raw experience only).  TrollGuard is perimeter security; embedding failure is an
+#         unsafe state so it must fail closed, not silently degrade to SAFE.
+#   How:  Import embed + EmbeddingUnavailableError + DualPassIncompleteError; catch only those
+#         two exception types; log.error with reason; re-raise.  Caller (OpenClawAdapter.
+#         on_message) propagates the exception; the turn cannot proceed on a fake vector.
 # [2026-06-22] Claude Code (Opus 4.8) — #328 Step 3 (C): TrollGuard → depositor (not autonomic writer)
 #   What: _update_autonomic_state() renamed → _deposit_perimeter_threat(): on a text-level threat it
 #         DEPOSITS perimeter:threat:<hash> (severity in metadata) to the Commons instead of
@@ -175,12 +187,23 @@ class TrollGuardHook(OpenClawAdapter):
 
         Ecosystem standard: Snowflake/snowflake-arctic-embed-m-v1.5 (768-dim).
         ONNX Runtime, no torch dependency.
+
+        Fail-closed: embed failures propagate.  TrollGuard never falls back to
+        a fabricated hash vector — fake embeddings poison the substrate and
+        defeat the semantic air gap.  A failed embed is a degradation event;
+        it is logged clearly and raised so the caller cannot silently treat
+        the turn as SAFE.
         """
+        from ng_embed import embed, EmbeddingUnavailableError, DualPassIncompleteError
         try:
-            from ng_embed import embed
             return embed(text)
-        except Exception:
-            return self._hash_embed(text)
+        except (EmbeddingUnavailableError, DualPassIncompleteError) as exc:
+            logger.error(
+                "TrollGuard embedding failed (%s): %s; failing closed "
+                "(no hash fallback — fabricated vectors poison the substrate)",
+                type(exc).__name__, exc,
+            )
+            raise
 
     def on_conversation_started(self) -> None:
         self._in_conversation = True

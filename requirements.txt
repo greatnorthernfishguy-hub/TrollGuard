@@ -1,6 +1,9 @@
 # TrollGuard — Dependencies
 #
 # Changelog:
+# [2026-09-22] Claude Code (Kimi k2.7) — Add onnxruntime + tokenizers for canonical ng_embed.
+#   ng_embed.py now uses Snowflake/snowflake-arctic-embed-m-v1.5 via ONNX Runtime + tokenizers.
+#   These are lazy-loaded inside ng_embed, but must be declared as direct runtime dependencies.
 # [2026-02-17] Claude (Opus 4.6) — Initial creation.
 #   Mirrors PRD Appendix B with additions for NG-Lite and ET Modules.
 #   Core deps are required; optional deps have comments.
@@ -21,7 +24,9 @@ fastapi                 # REST API for agent integration (PRD §7.3)
 uvicorn                 # ASGI server for FastAPI
 
 # --- LLM Integration (Layer 3: Swarm Audit) ---
-huggingface_hub         # HuggingFace Inference API client
+huggingface_hub         # HuggingFace Inference API client + ng_embed tokenizer/model download
+onnxruntime             # Canonical ng_embed embedding runtime (Snowflake-arctic-embed-m-v1.5 ONNX)
+tokenizers              # Canonical ng_embed tokenizer (HuggingFace fast tokenizer)
 
 # --- Cisco Base (Layer 1) ---
 # yara-python           # YARA rules engine — install when cisco_base is cloned
