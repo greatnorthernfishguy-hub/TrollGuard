@@ -8,7 +8,7 @@ OpenClaw calls get_instance().on_message(text) on every turn.
 The adapter handles all ecosystem wiring (Tier 1/2/3 learning) and
 memory logging.  This file only implements what's unique to TrollGuard:
 
-  - _embed():              Sentence-transformer / hash fallback
+  - _embed():              Centralized ecosystem embed wrapper (fail-closed)
   - _module_on_message():  Run the security scan pipeline
   - _module_stats():       TrollGuard-specific telemetry
 
